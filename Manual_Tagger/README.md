@@ -47,13 +47,22 @@ Select some text, then click a label or press its number key. That is the whole 
 | <kbd>Delete</kbd> | Remove the selected span |
 | <kbd>u</kbd> | Jump to the next record with no spans |
 | <kbd>Ctrl</kbd>+<kbd>Z</kbd> | Undo (<kbd>Shift</kbd> to redo) |
-| <kbd>Ctrl</kbd>+<kbd>S</kbd> | Save |
+| <kbd>Ctrl</kbd>+<kbd>S</kbd> | Save (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> for Save As) |
 | <kbd>/</kbd> | Focus search |
 | <kbd>?</kbd> | Shortcut list |
 
 Click a highlighted span to select it. Fine-tune its boundaries with the start/end
 number fields in **Spans on this record**. Sloppy selections are trimmed to the word —
 grabbing `" Campo "` stores `Campo`.
+
+### Starting over
+
+**Clear record**, in the span list header, drops every span on the tweet in front of you.
+**Remove every label in the dataset…**, at the bottom of the Dataset panel, empties the
+whole corpus — it states how many spans across how many records it is about to destroy
+and makes you confirm. Both are undoable with <kbd>Ctrl</kbd>+<kbd>Z</kbd>, the
+dataset-wide one in a single step, but only while the tab stays open: once you save over
+your file or close the tab, the undo history is gone.
 
 ### One class per word
 
@@ -104,6 +113,13 @@ Everything here is yours to change, under **Edit sets…**:
 - **Descriptions** show on hover, which keeps a team consistent about what each tag means.
 - Labels found in a loaded file are adopted automatically, so nothing in your data is
   ever unreachable.
+
+### Aliases
+
+`LOCATION` is treated as another spelling of `LOC`, never a class of its own. It is
+rewritten on load, folded out of any saved catalog or tag set that still carries it, and
+typing it as a new label gives you `LOC`. This stops one class being split across two
+names. Add more pairs to `LABEL_ALIASES` near the top of the core if you need them.
 
 Sets and definitions are remembered in this browser, and **Export → Tag sets** writes
 them as one file:
@@ -183,8 +199,13 @@ into BIO; going the other way loses the exact character offsets.
 ## Not losing work
 
 Every change is autosaved to this browser within a second, and the tool offers to
-restore it next time you open the page. `Save` writes a real file: in place on
-Chrome/Edge over `http(s)`, otherwise as a download.
+restore it next time you open the page.
+
+**Save** writes a real file: in place on Chrome/Edge over `http(s)`, otherwise as a
+download. **Save As…** always asks where to put it, and from then on Save goes to the new
+file — useful for keeping a pass of annotation separate from the file you started with.
+Where the browser cannot write files directly, Save As asks for a name and downloads
+under it.
 
 Autosave needs browser storage, which is blocked on some `file://` setups. When that
 happens the tool says so in a banner rather than pretending to save — serve the folder
@@ -229,8 +250,8 @@ python -m http.server 8000
 then open <http://localhost:8000/Manual_Tagger/tests/test_annotator.html>. It loads the
 real tool in a frame and drives it: parsing, span arithmetic, live-DOM offset mapping,
 editing, undo, navigation, filtering, tag sets, the no-overlap rule, both export shapes,
-real records from `tweets_c.json`, and a 7,336-record scale check. **98 assertions, all
-currently passing.**
+label aliasing, Save As naming, clearing a record and the whole dataset, real records from
+`tweets_c.json`, and a 7,336-record scale check. **125 assertions, all currently passing.**
 
 Running it is safe: it switches autosave off for the duration and restores your tag sets
 exactly as they were, even if an assertion fails partway through.

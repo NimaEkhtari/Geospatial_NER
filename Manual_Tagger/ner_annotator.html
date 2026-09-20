@@ -112,6 +112,8 @@
   .btn.sm { padding: 3px 8px; font-size: 13px; border-radius: 7px; }
   .btn.ghost { background: transparent; border-color: transparent; box-shadow: none; color: var(--muted); }
   .btn.ghost:hover { color: var(--text); background: var(--panel-2); }
+  .btn.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+  .btn.danger:hover:not(:disabled) { background: var(--danger); color: var(--panel); border-color: var(--danger); }
 
   .menuwrap { position: relative; }
   .menu {
@@ -295,6 +297,7 @@
   <div class="spacer"></div>
   <button class="btn" id="btnOpen">Open data…</button>
   <button class="btn" id="btnSave">Save</button>
+  <button class="btn" id="btnSaveAs">Save As…</button>
   <div class="menuwrap">
     <button class="btn" id="btnExport">Export ▾</button>
     <div class="menu" id="exportMenu" hidden>
@@ -340,7 +343,9 @@
 
     <!-- ---------- entities on this record ---------- -->
     <div class="card">
-      <h2>Spans on this record <span id="entCount" class="muted"></span></h2>
+      <h2>Spans on this record <span id="entCount" class="muted"></span>
+        <button class="btn sm ghost" id="btnClearRecord" style="float:right;margin-top:-4px" title="Remove every span on this record (Ctrl+Z undoes it)">Clear record</button>
+      </h2>
       <div id="entList"><div class="muted small">Nothing tagged yet. Select text above, then click a label or press its number key.</div></div>
     </div>
 
@@ -385,6 +390,9 @@
       <h2>Dataset</h2>
       <div id="stats"></div>
       <div id="labelStats" style="margin-top:10px"></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn sm danger" id="btnClearAll">Remove every label in the dataset…</button>
+      </div>
     </div>
 
     <div class="card">
@@ -452,7 +460,7 @@
       <div><kbd>Esc</kbd></div><div>Clear the selection</div>
       <div><kbd>u</kbd></div><div>Jump to the next record with no spans</div>
       <div><kbd>Ctrl</kbd>+<kbd>Z</kbd></div><div>Undo (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> to redo)</div>
-      <div><kbd>Ctrl</kbd>+<kbd>S</kbd></div><div>Save</div>
+      <div><kbd>Ctrl</kbd>+<kbd>S</kbd></div><div>Save (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> for Save As)</div>
       <div><kbd>/</kbd></div><div>Focus the search box</div>
       <div><kbd>?</kbd></div><div>This dialog</div>
     </div>
@@ -489,6 +497,35 @@ var NER = (function () {
     { name: "EVENT",  color: "#d97706", desc: "Named events: hurricanes, wildfires, battles, sports events" },
     { name: "HASH",   color: "#65a30d", desc: "Hashtag or handle that carries entity meaning" }
   ];
+
+  // Labels that are just another spelling of one we already have. Applied when
+  // data is loaded and when a saved scheme is read, so a stray alias cannot
+  // split one class across two names.
+  var LABEL_ALIASES = { "LOCATION": "LOC" };
+
+  function canonicalLabel(name) {
+    var c = LABEL_ALIASES[String(name).toUpperCase()];
+    return c || name;
+  }
+
+  // Rewrites aliased labels in place and drops the exact duplicates that can
+  // result. Returns how many spans were touched.
+  function applyAliases(records) {
+    var changed = 0;
+    records.forEach(function (r) {
+      var seen = {}, kept = [];
+      r.label.forEach(function (sp) {
+        var canon = canonicalLabel(sp[2]);
+        if (canon !== sp[2]) { sp[2] = canon; changed++; }
+        var key = sp[0] + ":" + sp[1] + ":" + sp[2];
+        if (seen[key]) return;          // the alias collapsed onto an identical span
+        seen[key] = 1;
+        kept.push(sp);
+      });
+      r.label = kept;
+    });
+    return changed;
+  }
 
   var DEFAULT_TAG_SETS = [
     { id: "core",    name: "Core entities",       labels: ["GPE", "ORG", "PERSON", "NORP"] },
@@ -606,7 +643,13 @@ var NER = (function () {
     }
     if (!Array.isArray(raw)) throw new Error("Unrecognized structure: expected an array of records.");
     var records = raw.map(normalizeRecord);
-    return { records: records, labels: labels };
+    var aliased = applyAliases(records);
+    if (labels) labels = labels.map(function (l) {
+      if (typeof l === "string") return canonicalLabel(l);
+      if (l && l.name) return { name: canonicalLabel(l.name), color: l.color, desc: l.desc };
+      return l;
+    });
+    return { records: records, labels: labels, aliased: aliased };
   }
 
   // Every distinct label name used anywhere in the data, in first-seen order.
@@ -799,6 +842,7 @@ var NER = (function () {
     parseDataset: parseDataset, labelsUsed: labelsUsed, segmentText: segmentText,
     trimSpan: trimSpan, spansOverlap: spansOverlap, sortSpans: sortSpans,
     findOverlaps: findOverlaps, resolveOverlaps: resolveOverlaps,
+    LABEL_ALIASES: LABEL_ALIASES, canonicalLabel: canonicalLabel, applyAliases: applyAliases,
     toPlain: toPlain, toJSON: toJSON, toJSONL: toJSONL, toBundle: toBundle,
     tokenize: tokenize, toCoNLL: toCoNLL, datasetIssues: datasetIssues, stats: stats
   };
@@ -1013,9 +1057,40 @@ var NER = (function () {
     state.activeSet = (savedSets && savedSets.active) || state.tagSets[0].id;
     if (!tagSet(state.activeSet)) state.activeSet = state.tagSets[0].id;
 
+    migrateAliases();
+
     // An older scheme may predate the catalog additions; make sure nothing a
     // set references is missing a definition.
     ensureCatalogCovers(allSetLabels());
+  }
+
+  // Folds aliased labels (LOCATION -> LOC) out of the saved catalog and out of
+  // every tag set, keeping the canonical entry and its colour.
+  function migrateAliases() {
+    var removed = [];
+    state.labels = state.labels.filter(function (l) {
+      var canon = NER.canonicalLabel(l.name);
+      if (canon === l.name) return true;
+      removed.push(l.name);
+      // keep the definition only if the canonical name is not already defined
+      if (!state.labels.some(function (x) { return x.name === canon; })) {
+        l.name = canon;
+        return true;
+      }
+      return false;
+    });
+    if (!removed.length) return 0;
+
+    state.tagSets.forEach(function (s) {
+      var out = [];
+      s.labels.forEach(function (n) {
+        var canon = NER.canonicalLabel(n);
+        if (out.indexOf(canon) < 0) out.push(canon);
+      });
+      s.labels = out;
+    });
+    saveScheme();
+    return removed.length;
   }
 
   function tagSet(id) {
@@ -1064,6 +1139,11 @@ var NER = (function () {
   function addLabel(name, color, desc, intoSetId) {
     name = String(name || "").trim();
     if (!name) return false;
+    var canon = NER.canonicalLabel(name);
+    if (canon !== name) {
+      toast("“" + name + "” is another name for " + canon + " — using " + canon + ".");
+      name = canon;
+    }
     var set = tagSet(intoSetId || state.activeSet);
     if (labelDef(name)) {
       if (set && set.labels.indexOf(name) < 0) {
@@ -1138,9 +1218,34 @@ var NER = (function () {
     state.redo.length = 0;
   }
 
+  // A whole-dataset snapshot, so bulk clears remain undoable.
+  function snapshotAll() {
+    state.undo.push({
+      bulk: true,
+      labels: state.records.map(function (r) { return JSON.parse(JSON.stringify(r.label)); })
+    });
+    if (state.undo.length > 200) state.undo.shift();
+    state.redo.length = 0;
+  }
+
   function applyRestore(stack, other) {
     var entry = stack.pop();
     if (!entry) { toast("Nothing to " + (stack === state.undo ? "undo" : "redo") + "."); return; }
+
+    if (entry.bulk) {
+      other.push({
+        bulk: true,
+        labels: state.records.map(function (r) { return JSON.parse(JSON.stringify(r.label)); })
+      });
+      state.records.forEach(function (r, i) {
+        if (entry.labels[i]) r.label = entry.labels[i];
+      });
+      state.selectedEnt = null; state.pending = null;
+      markDirty(); computeView(); renderAll();
+      toast("Restored every label in the dataset.");
+      return;
+    }
+
     var rec = state.records[entry.i];
     other.push({ i: entry.i, label: JSON.parse(JSON.stringify(rec.label)), comments: (rec.Comments || []).slice() });
     rec.label = entry.label;
@@ -1500,6 +1605,38 @@ var NER = (function () {
     }
   }
 
+  function clearRecord() {
+    var rec = cur();
+    if (!rec) return;
+    if (!rec.label.length) { toast("This record has no spans."); return; }
+    var n = rec.label.length;
+    snapshot();
+    rec.label = [];
+    state.selectedEnt = null; state.pending = null;
+    markDirty(); renderAll();
+    toast("Cleared " + n + " span" + (n === 1 ? "" : "s") + " — Ctrl+Z undoes it.");
+  }
+
+  function clearAllLabels() {
+    if (!state.records.length) { toast("No data loaded."); return; }
+    var s = NER.stats(state.records);
+    if (!s.spans) { toast("The dataset has no labels to remove."); return; }
+    if (!confirm(
+      "Remove EVERY label in the whole dataset?\n\n" +
+      s.spans + " spans across " + s.labeled + " of " + s.total + " records will be deleted, " +
+      "leaving the text untouched but completely untagged.\n\n" +
+      "This is your entire annotation effort. Ctrl+Z can undo it while this tab stays open, " +
+      "but nothing will bring it back once you save over your file or close the tab.\n\n" +
+      "OK — delete all " + s.spans + " spans.\nCancel — keep them."
+    )) return;
+
+    snapshotAll();
+    state.records.forEach(function (r) { r.label = []; });
+    state.selectedEnt = null; state.pending = null;
+    markDirty(); computeView(); renderAll();
+    toast("Removed all " + s.spans + " spans — Ctrl+Z undoes it while this tab is open.");
+  }
+
   function removeEntity(i) {
     var rec = cur();
     if (!rec || !rec.label[i]) return;
@@ -1589,7 +1726,9 @@ var NER = (function () {
     state.dirty = false;
     els.dirtyDot.className = "dot";
     hideBanner();
-    toast("Loaded " + state.records.length + " records" + (added ? " (+" + added + " labels from the data)" : "") + ".");
+    toast("Loaded " + state.records.length + " records" +
+      (added ? " (+" + added + " labels from the data)" : "") +
+      (parsed.aliased ? " — " + parsed.aliased + " spans renamed to their canonical label" : "") + ".");
     saveSession();
   }
 
@@ -1624,10 +1763,12 @@ var NER = (function () {
     }
   }
 
-  function save() {
+  // asNew: true always asks for a destination, even when we already have one.
+  function save(asNew) {
     if (!state.records.length) { toast("Nothing to save."); return; }
     var text = NER.toJSON(state.records);
-    if (state.fileHandle && state.fileHandle.createWritable) {
+
+    if (!asNew && state.fileHandle && state.fileHandle.createWritable) {
       state.fileHandle.createWritable()
         .then(function (w) { return w.write(text).then(function () { return w.close(); }); })
         .then(function () {
@@ -1638,21 +1779,42 @@ var NER = (function () {
         .catch(function (err) { toast("Could not write the file: " + err.message, "error"); });
       return;
     }
+
     if (CAN_FS) {
       window.showSaveFilePicker({
-        suggestedName: state.fileName || "annotations.json",
+        suggestedName: suggestedSaveName(asNew),
         types: [{ description: "JSON", accept: { "application/json": [".json"] } }]
       }).then(function (handle) {
         state.fileHandle = handle;
         state.fileName = handle.name;
         els.fileName.textContent = handle.name;
-        save();
+        save(false);
       }).catch(function (err) { if (!err || err.name !== "AbortError") toast("Save cancelled.", "error"); });
       return;
     }
-    download(state.fileName || "annotations.json", text);
+
+    // No file-system access: Save As becomes "download under a name you pick".
+    var name = suggestedSaveName(asNew);
+    if (asNew) {
+      var typed = prompt("Save a copy as:", name);
+      if (typed === null) return;
+      name = typed.trim() || name;
+      if (!/\.[a-z0-9]+$/i.test(name)) name += ".json";
+    }
+    download(name, text);
+    if (asNew) {
+      state.fileName = name;
+      els.fileName.textContent = name;
+    }
     state.dirty = false; els.dirtyDot.className = "dot";
-    toast("Downloaded — autosave still holds your work in this browser.");
+    toast(asNew ? "Saved a copy as " + name + "." : "Downloaded — autosave still holds your work in this browser.");
+  }
+
+  function suggestedSaveName(asNew) {
+    var base = state.fileName || "annotations.json";
+    if (!asNew) return base;
+    var m = base.match(/^(.*?)(\.[a-z0-9]+)?$/i);
+    return (m[1] || "annotations") + " copy" + (m[2] || ".json");
   }
 
   function doExport(kind) {
@@ -1834,7 +1996,10 @@ var NER = (function () {
     // file pickers
     $("btnOpen").onclick = openData;
     $("filePicker").onchange = function (e) { if (e.target.files[0]) readFile(e.target.files[0], null); e.target.value = ""; };
-    $("btnSave").onclick = save;
+    $("btnSave").onclick = function () { save(false); };
+    $("btnSaveAs").onclick = function () { save(true); };
+    $("btnClearRecord").onclick = clearRecord;
+    $("btnClearAll").onclick = clearAllLabels;
 
     // export menu
     var menu = $("exportMenu");
@@ -2045,7 +2210,7 @@ var NER = (function () {
     // keyboard
     document.addEventListener("keydown", function (e) {
       var meta = e.ctrlKey || e.metaKey;
-      if (meta && e.key.toLowerCase() === "s") { e.preventDefault(); save(); return; }
+      if (meta && e.key.toLowerCase() === "s") { e.preventDefault(); save(e.shiftKey); return; }
       if (meta && e.key.toLowerCase() === "z") {
         e.preventDefault();
         if (e.shiftKey) applyRestore(state.redo, state.undo); else applyRestore(state.undo, state.redo);
@@ -2130,7 +2295,9 @@ var NER = (function () {
       computeView: computeView, renderAll: renderAll, selectionOffsets: selectionOffsets,
       activeLabels: activeLabels, activeSet: activeSet, tagSet: tagSet,
       addLabel: addLabel, renderLabels: renderLabels, renderManager: renderManager,
-      defaultLabels: defaultLabels, defaultTagSets: defaultTagSets, saveScheme: saveScheme
+      defaultLabels: defaultLabels, defaultTagSets: defaultTagSets, saveScheme: saveScheme,
+      clearRecord: clearRecord, clearAllLabels: clearAllLabels,
+      migrateAliases: migrateAliases, suggestedSaveName: suggestedSaveName
     };
   }
 

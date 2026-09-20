@@ -446,6 +446,91 @@
     eq("BIO starts a new entity at the next span", bio.filter(function (l) { return /^Fallbrook/.test(l); }), ["Fallbrook B-GPE"]);
     eq("BIO marks untagged tokens O", bio.filter(function (l) { return /^man/.test(l); }), ["man O"]);
 
+    G("LOCATION folds into LOC");
+    eq("canonicalLabel maps the alias", NER.canonicalLabel("LOCATION"), "LOC");
+    eq("and is case-insensitive about it", NER.canonicalLabel("location"), "LOC");
+    eq("a real label is left alone", NER.canonicalLabel("GPE"), "GPE");
+    ok("LOCATION is not in the default catalog",
+      !APP.defaultLabels().some(function (l) { return l.name === "LOCATION"; }));
+    ok("nor in any default tag set",
+      !APP.defaultTagSets().some(function (s) { return s.labels.indexOf("LOCATION") >= 0; }));
+
+    var aliasParsed = NER.parseDataset('[{"id":1,"text":"fire near Campo tonight","label":[[10,15,"LOCATION"]]}]');
+    eq("a LOCATION span is rewritten on load", aliasParsed.records[0].label, [[10, 15, "LOC"]]);
+    eq("and the rewrite is reported", aliasParsed.aliased, 1);
+
+    var dupParsed = NER.parseDataset('[{"id":1,"text":"fire near Campo tonight","label":[[10,15,"LOCATION"],[10,15,"LOC"]]}]');
+    eq("an alias collapsing onto an identical span is de-duplicated", dupParsed.records[0].label, [[10, 15, "LOC"]]);
+
+    // a stale catalog, as a browser that saw LOCATION earlier would hold
+    APP.state.labels = APP.defaultLabels().concat([{ name: "LOCATION", color: "#999999", desc: "stale" }]);
+    APP.state.tagSets = APP.defaultTagSets();
+    APP.state.tagSets[1].labels.push("LOCATION");
+    APP.state.activeSet = APP.state.tagSets[0].id;
+    eq("migration reports what it folded away", APP.migrateAliases(), 1);
+    ok("LOCATION is gone from the catalog",
+      !APP.state.labels.some(function (l) { return l.name === "LOCATION"; }));
+    ok("LOCATION is gone from every tag set",
+      !APP.state.tagSets.some(function (s) { return s.labels.indexOf("LOCATION") >= 0; }));
+    eq("the set it was in keeps its real labels, un-duplicated",
+      APP.tagSet("geosoc").labels, ["GPE", "LOC", "FAC", "PERSON", "NORP", "EVENT", "HASH"]);
+    eq("LOC keeps its own colour, not the stale entry's",
+      APP.state.labels.filter(function (l) { return l.name === "LOC"; })[0].color, "#0891b2");
+
+    APP.state.activeSet = "geosoc";
+    APP.addLabel("LOCATION");
+    ok("typing LOCATION as a new label yields LOC, not a second class",
+      !APP.state.labels.some(function (l) { return l.name === "LOCATION"; }));
+
+    G("Save As");
+    ok("the toolbar offers Save As", !!doc.getElementById("btnSaveAs"));
+    APP.state.fileName = "tweets_c.json";
+    eq("a plain Save keeps the current name", APP.suggestedSaveName(false), "tweets_c.json");
+    eq("Save As suggests a copy", APP.suggestedSaveName(true), "tweets_c copy.json");
+    APP.state.fileName = "no_extension";
+    eq("a name without an extension still gets one", APP.suggestedSaveName(true), "no_extension copy.json");
+    APP.state.fileName = "batch.annotated.jsonl";
+    eq("only the final extension is treated as one", APP.suggestedSaveName(true), "batch.annotated copy.jsonl");
+
+    G("Clearing labels");
+    function threeRecords() {
+      return { records: [
+        NER.normalizeRecord({ id: 1, text: "fire near Campo", Comments: [], label: [[10, 15, "GPE"]] }, 0),
+        NER.normalizeRecord({ id: 2, text: "flood in Fallbrook", Comments: [], label: [[9, 18, "GPE"]] }, 1),
+        NER.normalizeRecord({ id: 3, text: "nothing tagged here", Comments: [], label: [] }, 2)
+      ], labels: null };
+    }
+    APP.adoptDataset(threeRecords(), "clear.json");
+
+    APP.clearRecord();
+    eq("clearing a record empties just that record", APP.state.records[0].label, []);
+    eq("its neighbour is untouched", APP.state.records[1].label, [[9, 18, "GPE"]]);
+    doc.dispatchEvent(new win.KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }));
+    eq("undo brings the record's spans back", APP.state.records[0].label, [[10, 15, "GPE"]]);
+
+    var realConfirm2 = win.confirm;
+    win.confirm = function () { return false; };
+    APP.clearAllLabels();
+    eq("declining the dataset-wide warning changes nothing",
+      APP.state.records.map(function (r) { return r.label.length; }), [1, 1, 0]);
+
+    win.confirm = function () { return true; };
+    APP.clearAllLabels();
+    eq("accepting empties every record",
+      APP.state.records.map(function (r) { return r.label.length; }), [0, 0, 0]);
+    eq("the text is left completely alone",
+      APP.state.records.map(function (r) { return r.text; }),
+      ["fire near Campo", "flood in Fallbrook", "nothing tagged here"]);
+    win.confirm = realConfirm2;
+
+    doc.dispatchEvent(new win.KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }));
+    eq("one undo restores the whole dataset",
+      APP.state.records.map(function (r) { return r.label; }),
+      [[[10, 15, "GPE"]], [[9, 18, "GPE"]], []]);
+    doc.dispatchEvent(new win.KeyboardEvent("keydown", { key: "z", ctrlKey: true, shiftKey: true, bubbles: true }));
+    eq("redo clears it again",
+      APP.state.records.map(function (r) { return r.label.length; }), [0, 0, 0]);
+
     G("Scale");
     var big = [];
     for (var i = 0; i < 7336; i++) {
