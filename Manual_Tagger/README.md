@@ -55,44 +55,80 @@ Click a highlighted span to select it. Fine-tune its boundaries with the start/e
 number fields in **Spans on this record**. Sloppy selections are trimmed to the word —
 grabbing `" Campo "` stores `Campo`.
 
-Overlapping and nested spans are supported: the innermost one takes the colour and the
-region is hatched, so `San Diego` can be `GPE` inside `San Diego Sheriff's Office` as
-`ORG` without either one being lost.
+### One class per word
+
+Spans are not allowed to overlap — every character belongs to at most one entity, so a
+word can never carry two classes. If a new span would cover an existing one, the tool
+names what it would swallow and asks whether to replace it; cancelling leaves everything
+as it was. Editing offsets by hand is held to the same rule, and a file that arrives with
+overlaps already in it is flagged in **Data health** with a one-click repair that keeps
+the longest span of each clash.
 
 ---
 
-## Your own label scheme
+## Tag sets
 
-Eight defaults ship as quick picks, aligned with the OntoNotes types spaCy uses:
+A **tag set** is a named selection of labels — the palette you tag with. Pick one from
+the sidebar and the quick picks, the number keys and the re-tag dropdown all follow it.
+Three ship with the tool:
+
+| Tag set | Labels |
+| --- | --- |
+| **Core entities** | `GPE` `ORG` `PERSON` `NORP` |
+| **Geospatial + social** | `GPE` `LOC` `FAC` `PERSON` `NORP` `EVENT` `HASH` |
+| **Street addresses** | `GPE` `LOC` `FAC` `ADD` |
+
+The labels themselves live in one shared **catalog**, so a label keeps the same colour
+and definition in every set that uses it:
 
 | Label | Covers |
 | --- | --- |
 | `GPE` | Countries, cities, states, counties |
 | `LOC` | Non-GPE locations: regions, mountains, rivers, roads, water bodies |
 | `FAC` | Buildings, airports, highways, bridges, piers, parks |
+| `ADD` | An exact street address — “2200 block of Main St.”, “1010 Jefferson St., Houston, TX” |
 | `ORG` | Companies, agencies, institutions, teams |
 | `PERSON` | People, including fictional |
 | `NORP` | Nationalities, religious or political groups |
 | `EVENT` | Named hurricanes, wildfires, battles, sports events |
 | `HASH` | Hashtags and handles carrying entity meaning |
 
-They are only a starting point. In **Manage** you can add, rename, recolour, describe
-and delete labels freely:
+Everything here is yours to change, under **Edit sets…**:
 
-- **Renaming** a label rewrites every existing span that uses it, after asking.
-- **Deleting** one asks whether to drop its spans too or just retire it from the palette.
+- **Build your own set** with **New**, or **Duplicate** a preset and adjust it.
+- **Add or remove labels** from any set, presets included — click a label to take it out,
+  click one in the catalog to put it in. Arrows reorder it, which also sets its number key.
+- **Removing a label from a set** never deletes it; it stays in the catalog for other sets.
+- **Renaming** a label in the catalog renames it in every set *and* on every existing
+  span, after asking.
 - **Descriptions** show on hover, which keeps a team consistent about what each tag means.
 - Labels found in a loaded file are adopted automatically, so nothing in your data is
   ever unreachable.
 
-The scheme lives in your browser and can be exported as a small file:
+Sets and definitions are remembered in this browser, and **Export → Tag sets** writes
+them as one file:
 
 ```json
-{ "labels": [ { "name": "ROAD", "color": "#0891b2", "desc": "Named highways and streets" } ] }
+{
+  "version": 2,
+  "labels": [{ "name": "ADD", "color": "#ea580c", "desc": "An exact street address" }],
+  "tagSets": [{ "id": "address", "name": "Street addresses", "labels": ["GPE", "LOC", "FAC", "ADD"] }],
+  "activeTagSet": "address"
+}
 ```
 
-Commit that next to your data and annotators import it with **Manage → Import scheme**,
-so everyone tags against the same definitions.
+Commit that next to your data and annotators import it with **Edit sets… → Import**, so
+everyone tags against the same definitions. Older files that are just a list of labels
+still import — they arrive as a single set.
+
+### Why "tag set"?
+
+It is the standard NLP term (as in the Penn Treebank *tagset*), it matches what this tool
+is called, and it says the right thing: a set of tags, not a hierarchy or a category
+grouping. **Label set** is the equally common alternative, and **annotation scheme** is
+the more formal one — but that usually means the written guidelines as well as the
+labels, which is more than this is. "Tag group" reads like a grouping *of* tags by
+theme, which is not what these are.
 
 ---
 
@@ -127,13 +163,20 @@ lost by opening it here.
 
 ### Exports
 
+Both shapes are kept — character spans and token tags — because they serve different
+consumers:
+
 | Format | Use |
 | --- | --- |
-| JSON | Same schema as the input — the round trip is lossless |
-| JSONL | Line-delimited, for streaming pipelines |
-| Bundle | Labels + records together, to hand a task to someone |
-| CoNLL / BIO | `token TAG` per line, ready for sequence labelling |
-| Label scheme | Just the tag set |
+| **JSON (spans)** | Same schema as the input — the round trip is lossless. The editable, human-readable form |
+| **JSONL (spans)** | Line-delimited, for streaming pipelines |
+| **Bundle** | Labels, tag sets and records together, to hand a task to someone |
+| **CoNLL / BIO (tokens)** | `token TAG` per line — what a BERT token-classification head or `spacy convert` expects |
+| **Tag sets** | Label definitions and every set, no data |
+
+The span exports stay authoritative: BIO is generated *from* them, whitespace-tokenised,
+so you can regenerate it at any time after re-tagging. A span file can always be turned
+into BIO; going the other way loses the exact character offsets.
 
 ---
 
@@ -157,7 +200,8 @@ The sidebar scans the loaded dataset continuously and flags, with one-click fixe
 - duplicate record text
 - spans that fall outside their text, or are empty
 - spans starting or ending on whitespace
-- records with overlapping spans
+- spans starting or ending in the middle of a word
+- records with overlapping spans, which the tool no longer allows you to create
 
 `../data/tweets_c.json` currently reports **7,336 records, 6,678 labelled**, and two real
 problems worth knowing about:
@@ -167,6 +211,10 @@ problems worth knowing about:
   before keying anything on `id`.
 - **249 spans start or end on whitespace**, which will shift your token alignment. Use
   *Trim whitespace in spans*.
+
+It contains **no overlapping spans**, so the one-class-per-word rule costs you nothing on
+existing work. 16 spans do start or end mid-word, which is reported but not auto-fixed —
+expanding them to the whole word is a judgement call, not a mechanical one.
 
 ---
 
@@ -178,10 +226,14 @@ From the repo root:
 python -m http.server 8000
 ```
 
-then open <http://localhost:8000/Manual_Tagger/tests/test_annotator.html>. It loads the real tool in a
-frame and drives it: parsing, span arithmetic, overlap rendering, live-DOM offset
-mapping, editing, undo, navigation, filtering, export round trips, real records from
-`tweets_c.json`, and a 7,336-record scale check. 65 assertions, all currently passing.
+then open <http://localhost:8000/Manual_Tagger/tests/test_annotator.html>. It loads the
+real tool in a frame and drives it: parsing, span arithmetic, live-DOM offset mapping,
+editing, undo, navigation, filtering, tag sets, the no-overlap rule, both export shapes,
+real records from `tweets_c.json`, and a 7,336-record scale check. **98 assertions, all
+currently passing.**
+
+Running it is safe: it switches autosave off for the duration and restores your tag sets
+exactly as they were, even if an assertion fails partway through.
 
 The suite must be served over `http` — browsers block cross-frame access between
 `file://` pages, and the page tells you so rather than reporting false failures.

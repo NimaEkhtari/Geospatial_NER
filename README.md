@@ -30,7 +30,8 @@ entity spans as end-exclusive character offsets:
 }
 ```
 
-7,336 records, 6,678 of them carrying at least one span, across eight entity types:
+7,336 records, 6,678 of them carrying at least one span, across eight entity types (the
+catalog also defines `ADD` for street addresses, not yet used in this corpus):
 
 | Label | Spans | | Label | Spans |
 | --- | ---: | --- | --- | ---: |
@@ -55,10 +56,17 @@ A single self-contained HTML file: no framework, no build step, no network. Down
 clone the repo and double-click `Manual_Tagger/ner_annotator.html` — GitHub shows `.html`
 as source, so it will not run from the repo page itself.
 
-Select text, press a label key, move on. Label schemes are fully editable and shareable,
-overlapping spans are supported, and everything is autosaved as you go. Exports include
-the original JSON shape, JSONL, and **CoNLL/BIO** — the token-per-line format that
-sequence-labelling models such as BERT token classification consume directly.
+Select text, press a label key, move on. Everything is autosaved as you go.
+
+Labels are organised into **tag sets** — named palettes you switch between. Three ship
+with the tool (`Core entities`; `Geospatial + social`; `Street addresses`, which adds
+`ADD` for exact street addresses), and you can edit them or build your own; sets export
+as one file so a team tags against the same definitions. Spans may not overlap, so every
+word carries at most one class.
+
+Exports cover both shapes the downstream tools need: the original **character-span** JSON
+and JSONL, and **CoNLL/BIO** token tags, which a BERT token-classification head or
+`spacy convert` consumes directly.
 
 See [Manual_Tagger/README.md](Manual_Tagger/README.md).
 

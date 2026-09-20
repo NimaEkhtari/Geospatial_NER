@@ -255,6 +255,17 @@
     width: 34px; height: 28px; padding: 0; border: 1px solid var(--border-strong);
     border-radius: 6px; background: none;
   }
+  .modal h4 { margin: 16px 0 7px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .mgr { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--panel-2); }
+  .mgr h4 { margin-top: 12px; }
+  .lab.removable::after { content: "✕"; font-size: 10px; opacity: .75; margin-left: 2px; }
+  .lab.addable { background: transparent; color: var(--text); border: 1px dashed var(--border-strong); box-shadow: none; }
+  .lab.addable::before { content: "+"; font-weight: 700; opacity: .6; }
+  .lab .arrow {
+    background: rgba(255,255,255,.22); border: 0; color: #fff; border-radius: 4px;
+    font-size: 10px; line-height: 1; padding: 2px 3px; margin-left: 1px;
+  }
+  .lab .arrow:hover { background: rgba(255,255,255,.42); }
   .kbdlist { display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; font-size: 14px; }
   .kbdlist kbd {
     font-family: var(--mono); font-size: 12px; border: 1px solid var(--border-strong);
@@ -292,7 +303,7 @@
       <button data-export="bundle">JSON bundle <small>labels + records, for sharing a task</small></button>
       <button data-export="conll">CoNLL / BIO <small>token-per-line, for training</small></button>
       <hr />
-      <button data-export="scheme">Label scheme <small>just the tag set, to share with annotators</small></button>
+      <button data-export="scheme">Tag sets <small>label definitions + every set, to share with annotators</small></button>
     </div>
   </div>
   <button class="btn icon" id="btnTheme" title="Toggle light / dark">◐</button>
@@ -343,13 +354,14 @@
   <!-- ---------- sidebar ---------- -->
   <aside>
     <div class="card">
-      <h2>Label scheme <button class="btn sm ghost" id="btnManage" style="float:right;margin-top:-4px">Manage</button></h2>
-      <div class="labels" id="sideLabels"></div>
+      <h2>Tag set <button class="btn sm ghost" id="btnManage" style="float:right;margin-top:-4px">Edit sets…</button></h2>
+      <select id="tagSetSelect" style="width:100%"></select>
+      <div class="labels" id="sideLabels" style="margin-top:10px"></div>
       <div class="row" style="margin-top:10px">
         <input type="text" id="newLabel" placeholder="New label, e.g. ROAD" style="flex:1;min-width:0" />
         <button class="btn sm" id="btnAddLabel">Add</button>
       </div>
-      <div class="small muted" style="margin-top:6px">Select text, then click a label (or press <kbd>1</kbd>–<kbd>9</kbd>). With a span selected, a label key re-tags it.</div>
+      <div class="small muted" style="margin-top:6px">Select text, then click a label (or press <kbd>1</kbd>–<kbd>9</kbd>). With a span selected, a label key re-tags it. Spans cannot overlap — one class per word.</div>
     </div>
 
     <div class="card">
@@ -384,20 +396,43 @@
 
 <div id="toast"></div>
 
-<!-- ---------- label manager modal ---------- -->
+<!-- ---------- tag set manager modal ---------- -->
 <div class="modal-bg" id="manageModal" hidden>
   <div class="modal">
-    <h3>Label scheme</h3>
-    <div class="sub">Rename a label and every existing span using it is renamed too. Colors and descriptions are yours to set; the scheme is remembered in this browser and can be exported as a small JSON file to share with other annotators.</div>
+    <h3>Tag sets</h3>
+    <div class="sub">A tag set is a named selection of labels — the palette you tag with. Switch between
+    sets as the task changes, edit any of them, or build your own. Sets and label definitions are
+    remembered in this browser and export together as one file you can share with other annotators.</div>
+
+    <section class="mgr">
+      <div class="row">
+        <select id="mgrSetSelect" style="min-width:210px"></select>
+        <button class="btn sm" id="btnSetNew">New</button>
+        <button class="btn sm" id="btnSetDup">Duplicate</button>
+        <button class="btn sm" id="btnSetRename">Rename</button>
+        <button class="btn sm" id="btnSetDelete">Delete</button>
+      </div>
+
+      <h4>In this set <span class="muted small" id="mgrSetCount"></span></h4>
+      <div class="labels" id="mgrInSet"></div>
+      <div class="small muted">Click a label to take it out of this set. Arrows reorder it, which sets its number key.</div>
+
+      <h4>Add from the catalog</h4>
+      <div class="labels" id="mgrNotInSet"></div>
+      <div class="small muted" id="mgrCatalogNote"></div>
+    </section>
+
+    <h4>Label catalog</h4>
+    <div class="sub" style="margin-bottom:8px">Definitions are shared by every set. Renaming a label here renames every existing span that uses it.</div>
     <table class="labs">
-      <thead><tr><th style="width:34px"></th><th style="width:26%">Name</th><th>Description shown on hover</th><th style="width:56px">Spans</th><th style="width:34px"></th></tr></thead>
+      <thead><tr><th style="width:34px"></th><th style="width:22%">Name</th><th>Description shown on hover</th><th style="width:50px">Sets</th><th style="width:56px">Spans</th><th style="width:34px"></th></tr></thead>
       <tbody id="labsBody"></tbody>
     </table>
     <div class="row" style="margin-top:12px">
-      <button class="btn sm" id="btnLabAdd">+ Add label</button>
-      <button class="btn sm" id="btnLabDefaults">Reset to defaults</button>
-      <button class="btn sm" id="btnLabImport">Import scheme…</button>
-      <button class="btn sm" id="btnLabExport">Export scheme</button>
+      <button class="btn sm" id="btnLabAdd">+ New label</button>
+      <button class="btn sm" id="btnLabDefaults">Reset everything to defaults</button>
+      <button class="btn sm" id="btnLabImport">Import…</button>
+      <button class="btn sm" id="btnLabExport">Export</button>
       <span class="spacer"></span>
       <button class="btn primary" id="btnLabClose">Done</button>
     </div>
@@ -412,7 +447,7 @@
     <div class="kbdlist">
       <div><kbd>→</kbd> / <kbd>n</kbd></div><div>Next record</div>
       <div><kbd>←</kbd> / <kbd>p</kbd></div><div>Previous record</div>
-      <div><kbd>1</kbd> … <kbd>9</kbd></div><div>Tag the selected text with that label — or re-tag the selected span</div>
+      <div><kbd>1</kbd> … <kbd>9</kbd></div><div>Tag the selected text with that label — or re-tag the selected span. The numbers follow the active tag set's order</div>
       <div><kbd>Delete</kbd></div><div>Remove the selected span</div>
       <div><kbd>Esc</kbd></div><div>Clear the selection</div>
       <div><kbd>u</kbd></div><div>Jump to the next record with no spans</div>
@@ -421,6 +456,11 @@
       <div><kbd>/</kbd></div><div>Focus the search box</div>
       <div><kbd>?</kbd></div><div>This dialog</div>
     </div>
+    <h3 style="margin-top:18px">Tag sets and the one-class rule</h3>
+    <div class="sub">The number keys follow whichever tag set is active, so switching sets switches your
+    palette. Spans may not overlap — a word carries at most one class — so if a new span would cover an
+    existing one, you are asked whether to replace it.</div>
+
     <h3 style="margin-top:18px">How saving works</h3>
     <div class="sub" id="saveExplain"></div>
     <div class="row"><span class="spacer"></span><button class="btn primary" id="btnHelpClose">Close</button></div>
@@ -435,15 +475,25 @@
 var NER = (function () {
   "use strict";
 
+  // The catalog of every label the tool knows about. A tag set is a named
+  // selection from this catalog, so a label's color and definition stay the
+  // same everywhere it is used.
   var DEFAULT_LABELS = [
     { name: "GPE",    color: "#2563eb", desc: "Geo-political entity: countries, cities, states, counties" },
     { name: "LOC",    color: "#0891b2", desc: "Non-GPE location: regions, mountains, rivers, roads, bodies of water" },
     { name: "FAC",    color: "#7c3aed", desc: "Facility: buildings, airports, highways, bridges, piers, parks" },
+    { name: "ADD",    color: "#ea580c", desc: "Exact street address, e.g. “2200 block of Main St.” or “1010 Jefferson St., Houston, TX”" },
     { name: "ORG",    color: "#059669", desc: "Organization: companies, agencies, institutions, teams" },
     { name: "PERSON", color: "#dc2626", desc: "People, including fictional" },
     { name: "NORP",   color: "#db2777", desc: "Nationalities or religious / political groups" },
     { name: "EVENT",  color: "#d97706", desc: "Named events: hurricanes, wildfires, battles, sports events" },
     { name: "HASH",   color: "#65a30d", desc: "Hashtag or handle that carries entity meaning" }
+  ];
+
+  var DEFAULT_TAG_SETS = [
+    { id: "core",    name: "Core entities",       labels: ["GPE", "ORG", "PERSON", "NORP"] },
+    { id: "geosoc",  name: "Geospatial + social", labels: ["GPE", "LOC", "FAC", "PERSON", "NORP", "EVENT", "HASH"] },
+    { id: "address", name: "Street addresses",    labels: ["GPE", "LOC", "FAC", "ADD"] }
   ];
 
   var PALETTE = [
@@ -611,6 +661,31 @@ var NER = (function () {
 
   function spansOverlap(a, b) { return !(a[1] <= b[0] || a[0] >= b[1]); }
 
+  // Spans are required to be disjoint: a character belongs to at most one
+  // entity. These two keep that invariant.
+  function findOverlaps(spans, s, e, skipIdx) {
+    var hits = [], i;
+    for (i = 0; i < spans.length; i++) {
+      if (i === skipIdx) continue;
+      if (!(e <= spans[i][0] || s >= spans[i][1])) hits.push(i);
+    }
+    return hits;
+  }
+
+  // Greedy repair for data that already contains overlaps: keep the longest
+  // span of each clashing cluster, drop the rest.
+  function resolveOverlaps(spans) {
+    var byLength = spans.slice().sort(function (a, b) {
+      return (b[1] - b[0]) - (a[1] - a[0]) || a[0] - b[0];
+    });
+    var kept = [];
+    byLength.forEach(function (sp) {
+      var clashes = kept.some(function (k) { return spansOverlap(sp, k); });
+      if (!clashes) kept.push(sp);
+    });
+    return sortSpans(kept);
+  }
+
   function sortSpans(spans) {
     return spans.slice().sort(function (x, y) { return x[0] - y[0] || x[1] - y[1]; });
   }
@@ -674,28 +749,33 @@ var NER = (function () {
   }
 
   // ---------- validation ----------
+  function isWordChar(c) { return !!c && /[0-9A-Za-zÀ-ɏ]/.test(c); }
+
   function datasetIssues(records) {
-    var seenId = {}, dupIds = 0, badSpans = [], overlapping = 0, untrimmed = 0, dupTexts = 0, seenText = {};
+    var seenId = {}, dupIds = 0, badSpans = [], overlapping = 0, untrimmed = 0;
+    var dupTexts = 0, seenText = {}, midWord = 0;
     var i, j, k;
     for (i = 0; i < records.length; i++) {
       var rec = records[i], id = String(rec.id);
       if (seenId[id]) dupIds++; else seenId[id] = 1;
       if (seenText[rec.text]) dupTexts++; else seenText[rec.text] = 1;
-      var n = rec.text.length, hasOv = false;
+      var t = rec.text, n = t.length, hasOv = false;
       for (j = 0; j < rec.label.length; j++) {
         var sp = rec.label[j], s = sp[0], e = sp[1];
         if (!(s >= 0 && e <= n && s < e)) {
           badSpans.push({ record: i, span: j, reason: s >= e ? "empty or reversed" : "outside the text" });
           continue;
         }
-        if (/^\s|\s$/.test(rec.text.slice(s, e))) untrimmed++;
+        if (/^\s|\s$/.test(t.slice(s, e))) untrimmed++;
+        if ((s > 0 && isWordChar(t.charAt(s - 1)) && isWordChar(t.charAt(s))) ||
+            (e < n && isWordChar(t.charAt(e - 1)) && isWordChar(t.charAt(e)))) midWord++;
         for (k = j + 1; k < rec.label.length; k++) if (spansOverlap(sp, rec.label[k])) hasOv = true;
       }
       if (hasOv) overlapping++;
     }
     return {
-      total: records.length, dupIds: dupIds, dupTexts: dupTexts,
-      badSpans: badSpans, overlapping: overlapping, untrimmed: untrimmed
+      total: records.length, dupIds: dupIds, dupTexts: dupTexts, badSpans: badSpans,
+      overlapping: overlapping, untrimmed: untrimmed, midWord: midWord
     };
   }
 
@@ -713,10 +793,12 @@ var NER = (function () {
   }
 
   return {
-    DEFAULT_LABELS: DEFAULT_LABELS, PALETTE: PALETTE, colorForName: colorForName,
+    DEFAULT_LABELS: DEFAULT_LABELS, DEFAULT_TAG_SETS: DEFAULT_TAG_SETS,
+    PALETTE: PALETTE, colorForName: colorForName,
     coerceSpan: coerceSpan, normalizeRecord: normalizeRecord, parseJSONL: parseJSONL,
     parseDataset: parseDataset, labelsUsed: labelsUsed, segmentText: segmentText,
     trimSpan: trimSpan, spansOverlap: spansOverlap, sortSpans: sortSpans,
+    findOverlaps: findOverlaps, resolveOverlaps: resolveOverlaps,
     toPlain: toPlain, toJSON: toJSON, toJSONL: toJSONL, toBundle: toBundle,
     tokenize: tokenize, toCoNLL: toCoNLL, datasetIssues: datasetIssues, stats: stats
   };
@@ -735,7 +817,10 @@ var NER = (function () {
     records: [],
     view: [],              // record indices passing the current filter
     pos: 0,                // cursor into view
-    labels: [],            // [{name,color,desc}]
+    labels: [],            // catalog: [{name,color,desc}]
+    tagSets: [],           // [{id,name,labels:[name,…]}]
+    activeSet: null,       // id of the tag set being tagged with
+    mgrSet: null,          // id of the set open in the manager
     fileName: null,
     fileHandle: null,      // File System Access API handle, when available
     dirty: false,
@@ -751,7 +836,8 @@ var NER = (function () {
   ["textbox", "selbar", "counter", "jump", "quickLabels", "sideLabels", "entList", "entCount",
    "comments", "search", "labelFilter", "filterInfo", "stats", "labelStats", "health",
    "progressBar", "fileChip", "fileName", "fileMeta", "dirtyDot", "toast", "banner",
-   "bannerText", "bannerActions", "labsBody", "newLabel", "brandSub", "saveExplain"]
+   "bannerText", "bannerActions", "labsBody", "newLabel", "brandSub", "saveExplain",
+   "tagSetSelect", "mgrSetSelect", "mgrInSet", "mgrNotInSet", "mgrSetCount", "mgrCatalogNote"]
     .forEach(function (k) { els[k] = $(k); });
 
   var CAN_FS = typeof window.showSaveFilePicker === "function";
@@ -902,39 +988,116 @@ var NER = (function () {
     var d = labelDef(name);
     return d ? d.color : NER.colorForName(name);
   }
-  function saveLabels() { lsSet("ner-labels", state.labels); }
-
-  function loadLabels() {
-    var saved = lsGet("ner-labels");
-    state.labels = (Array.isArray(saved) && saved.length)
-      ? saved.filter(function (l) { return l && l.name; })
-      : NER.DEFAULT_LABELS.map(function (l) { return { name: l.name, color: l.color, desc: l.desc }; });
+  function defaultLabels() {
+    return NER.DEFAULT_LABELS.map(function (l) { return { name: l.name, color: l.color, desc: l.desc }; });
+  }
+  function defaultTagSets() {
+    return NER.DEFAULT_TAG_SETS.map(function (s) { return { id: s.id, name: s.name, labels: s.labels.slice() }; });
   }
 
-  function addLabel(name, color, desc) {
+  function saveScheme() {
+    lsSet("ner-labels", state.labels);
+    lsSet("ner-tagsets", { sets: state.tagSets, active: state.activeSet });
+  }
+
+  function loadScheme() {
+    var savedLabels = lsGet("ner-labels");
+    state.labels = (Array.isArray(savedLabels) && savedLabels.length)
+      ? savedLabels.filter(function (l) { return l && l.name; })
+      : defaultLabels();
+
+    var savedSets = lsGet("ner-tagsets");
+    state.tagSets = (savedSets && Array.isArray(savedSets.sets) && savedSets.sets.length)
+      ? savedSets.sets.filter(function (s) { return s && s.id && Array.isArray(s.labels); })
+      : defaultTagSets();
+    state.activeSet = (savedSets && savedSets.active) || state.tagSets[0].id;
+    if (!tagSet(state.activeSet)) state.activeSet = state.tagSets[0].id;
+
+    // An older scheme may predate the catalog additions; make sure nothing a
+    // set references is missing a definition.
+    ensureCatalogCovers(allSetLabels());
+  }
+
+  function tagSet(id) {
+    for (var i = 0; i < state.tagSets.length; i++) if (state.tagSets[i].id === id) return state.tagSets[i];
+    return null;
+  }
+  function activeSet() { return tagSet(state.activeSet) || state.tagSets[0] || { id: "", name: "", labels: [] }; }
+
+  // The labels shown as quick picks: the active set's, in its own order.
+  function activeLabels() {
+    return activeSet().labels.map(function (n) {
+      return labelDef(n) || { name: n, color: NER.colorForName(n), desc: "" };
+    });
+  }
+
+  function allSetLabels() {
+    var out = [];
+    state.tagSets.forEach(function (s) {
+      s.labels.forEach(function (n) { if (out.indexOf(n) < 0) out.push(n); });
+    });
+    return out;
+  }
+
+  function setsUsing(name) {
+    return state.tagSets.filter(function (s) { return s.labels.indexOf(name) >= 0; }).length;
+  }
+
+  function ensureCatalogCovers(names) {
+    var added = 0;
+    names.forEach(function (n) {
+      if (!labelDef(n)) {
+        state.labels.push({ name: n, color: NER.PALETTE[state.labels.length % NER.PALETTE.length], desc: "" });
+        added++;
+      }
+    });
+    return added;
+  }
+
+  function newSetId() {
+    var n = 1;
+    while (tagSet("set" + n)) n++;
+    return "set" + n;
+  }
+
+  // Adds to the catalog, and to the given set (defaults to the active one).
+  function addLabel(name, color, desc, intoSetId) {
     name = String(name || "").trim();
     if (!name) return false;
-    if (labelDef(name)) { toast("“" + name + "” is already in the scheme."); return false; }
+    var set = tagSet(intoSetId || state.activeSet);
+    if (labelDef(name)) {
+      if (set && set.labels.indexOf(name) < 0) {
+        set.labels.push(name);
+        saveScheme(); renderLabels(); renderLabelFilter(); renderStats();
+        toast("Added “" + name + "” to " + set.name + ".");
+        return true;
+      }
+      toast("“" + name + "” is already in this set.");
+      return false;
+    }
     state.labels.push({
       name: name,
       color: color || NER.PALETTE[state.labels.length % NER.PALETTE.length],
       desc: desc || ""
     });
-    saveLabels();
+    if (set && set.labels.indexOf(name) < 0) set.labels.push(name);
+    saveScheme();
     renderLabels(); renderLabelFilter(); renderStats();
     return true;
   }
 
-  // Pull in any label found in the data that the scheme does not know about.
+  // Pull in any label found in the data that the catalog does not know about,
+  // and make it reachable by putting it in the active set.
   function adoptLabelsFromData() {
-    var used = NER.labelsUsed(state.records), added = 0;
+    var used = NER.labelsUsed(state.records), added = 0, set = activeSet();
     used.forEach(function (n) {
       if (!labelDef(n)) {
         state.labels.push({ name: n, color: NER.PALETTE[(state.labels.length + added) % NER.PALETTE.length], desc: "" });
         added++;
       }
+      if (set.labels.indexOf(n) < 0 && setsUsing(n) === 0) set.labels.push(n);
     });
-    if (added) saveLabels();
+    if (added) saveScheme();
     return added;
   }
 
@@ -1081,8 +1244,8 @@ var NER = (function () {
       var sw = document.createElement("span"); sw.className = "swatch"; top.appendChild(sw);
 
       var sel = document.createElement("select");
-      var names = state.labels.map(function (l) { return l.name; });
-      if (names.indexOf(sp[2]) < 0) names.push(sp[2]);
+      var names = activeLabels().map(function (l) { return l.name; });
+      if (names.indexOf(sp[2]) < 0) names.push(sp[2]);   // keep a label from another set reachable
       names.forEach(function (n) {
         var o = document.createElement("option");
         o.value = n; o.textContent = n; if (n === sp[2]) o.selected = true;
@@ -1119,6 +1282,11 @@ var NER = (function () {
           v = Math.max(0, Math.min(v, rec.text.length));
           var ns = pair[1] === 0 ? v : sp[0], ne = pair[1] === 1 ? v : sp[1];
           if (ns >= ne) { toast("Start must be before end.", "error"); inp.value = sp[pair[1]]; return; }
+          if (NER.findOverlaps(rec.label, ns, ne, i).length) {
+            toast("That would overlap another span — spans must stay separate.", "error");
+            inp.value = sp[pair[1]];
+            return;
+          }
           snapshot(); sp[0] = ns; sp[1] = ne; markDirty(); renderAll();
         };
         adj.appendChild(lab); adj.appendChild(inp);
@@ -1129,9 +1297,10 @@ var NER = (function () {
   }
 
   function renderLabels() {
+    var labs = activeLabels();
     [els.quickLabels, els.sideLabels].forEach(function (host, hostIdx) {
       host.innerHTML = "";
-      state.labels.forEach(function (l, i) {
+      labs.forEach(function (l, i) {
         var b = document.createElement("button");
         b.className = "lab";
         b.style.setProperty("--lab-color", l.color);
@@ -1144,9 +1313,24 @@ var NER = (function () {
         b.onclick = function () { applyLabel(l.name); };
         host.appendChild(b);
       });
-      if (!state.labels.length && hostIdx === 1) {
-        host.innerHTML = '<span class="muted small">No labels yet — add one below.</span>';
+      if (!labs.length) {
+        host.innerHTML = hostIdx === 1
+          ? '<span class="muted small">This tag set is empty — add a label below, or pick another set.</span>'
+          : '<span class="muted small">No labels in the active tag set.</span>';
       }
+    });
+    renderTagSetSelect();
+  }
+
+  function renderTagSetSelect() {
+    var sel = els.tagSetSelect;
+    sel.innerHTML = "";
+    state.tagSets.forEach(function (s) {
+      var o = document.createElement("option");
+      o.value = s.id;
+      o.textContent = s.name + "  (" + s.labels.length + ")";
+      if (s.id === state.activeSet) o.selected = true;
+      sel.appendChild(o);
     });
   }
 
@@ -1186,7 +1370,8 @@ var NER = (function () {
     if (h.dupTexts) items.push(h.dupTexts + " records duplicate the text of another record.");
     if (h.badSpans.length) items.push(h.badSpans.length + " spans fall outside their text or are empty.");
     if (h.untrimmed) items.push(h.untrimmed + " spans start or end on whitespace.");
-    if (h.overlapping) items.push(h.overlapping + " records contain overlapping spans.");
+    if (h.midWord) items.push(h.midWord + " spans start or end in the middle of a word.");
+    if (h.overlapping) items.push(h.overlapping + " records contain overlapping spans, which this tool no longer allows.");
     if (!items.length) { els.health.innerHTML = '<span style="color:var(--ok)">No problems found.</span>'; return; }
     els.health.innerHTML = '<div class="warnbox">' + items.map(escapeHTML).join("<br>") + "</div>";
     var tools = document.createElement("div");
@@ -1206,6 +1391,18 @@ var NER = (function () {
         });
       });
       markDirty(); renderAll(); toast(c + " spans trimmed.");
+    }));
+    if (h.overlapping) tools.appendChild(mkBtn("Resolve overlaps (keep the longest)", function () {
+      if (!confirm("In each overlapping group the longest span is kept and the others are dropped, across " +
+                   h.overlapping + " records. This cannot be undone.")) return;
+      var removed = 0;
+      state.records.forEach(function (r) {
+        var before = r.label.length;
+        r.label = NER.resolveOverlaps(r.label);
+        removed += before - r.label.length;
+      });
+      markDirty(); renderAll();
+      toast(removed + " overlapping spans removed.");
     }));
     if (h.badSpans.length) tools.appendChild(mkBtn("Drop invalid spans", function () {
       if (!confirm("Remove " + h.badSpans.length + " spans that fall outside their text? This cannot be undone.")) return;
@@ -1265,6 +1462,28 @@ var NER = (function () {
       if (!t) { toast("That selection is only whitespace.", "error"); return; }
       var dup = rec.label.some(function (sp) { return sp[0] === t.start && sp[1] === t.end && sp[2] === name; });
       if (dup) { toast("That span is already tagged " + name + "."); return; }
+
+      // Spans must stay disjoint, so a clash is resolved rather than allowed.
+      var clash = NER.findOverlaps(rec.label, t.start, t.end, -1);
+      if (clash.length) {
+        var listing = clash.map(function (i) {
+          return "“" + rec.text.slice(rec.label[i][0], rec.label[i][1]) + "” (" + rec.label[i][2] + ")";
+        }).join(", ");
+        if (!confirm("Spans cannot overlap.\n\n“" + rec.text.slice(t.start, t.end) + "” as " + name +
+                     " would cover " + listing + ".\n\nOK — replace " +
+                     (clash.length > 1 ? "those spans" : "that span") + ".\nCancel — leave things as they are.")) return;
+        snapshot();
+        rec.label = rec.label.filter(function (_, i) { return clash.indexOf(i) < 0; });
+        rec.label.push([t.start, t.end, name]);
+        rec.label = NER.sortSpans(rec.label);
+        state.selectedEnt = rec.label.findIndex(function (sp) { return sp[0] === t.start && sp[1] === t.end && sp[2] === name; });
+        state.pending = null;
+        window.getSelection().removeAllRanges();
+        markDirty(); renderAll();
+        toast("Replaced " + clash.length + " overlapping span" + (clash.length > 1 ? "s" : "") + ".");
+        return;
+      }
+
       snapshot();
       rec.label.push([t.start, t.end, name]);
       rec.label = NER.sortSpans(rec.label);
@@ -1356,7 +1575,7 @@ var NER = (function () {
         if (typeof l === "string") { if (!labelDef(l)) state.labels.push({ name: l, color: NER.PALETTE[state.labels.length % NER.PALETTE.length], desc: "" }); }
         else if (l && l.name && !labelDef(l.name)) state.labels.push(l);
       });
-      saveLabels();
+      saveScheme();
     }
     var added = adoptLabelsFromData();
     state.filter = { query: "", status: "all", label: "" };
@@ -1443,11 +1662,85 @@ var NER = (function () {
     else if (kind === "jsonl") download(base + ".annotated.jsonl", NER.toJSONL(state.records));
     else if (kind === "bundle") download(base + ".bundle.json", NER.toBundle(state.records, state.labels));
     else if (kind === "conll") download(base + ".conll.txt", NER.toCoNLL(state.records), "text/plain");
-    else if (kind === "scheme") download("label_scheme.json", JSON.stringify({ labels: state.labels }, null, 2));
+    else if (kind === "scheme") download("tag_sets.json", JSON.stringify({
+      version: 2, labels: state.labels, tagSets: state.tagSets, activeTagSet: state.activeSet
+    }, null, 2));
     toast("Exported.");
   }
 
-  // ------------------------------------------------------- label manager
+  // --------------------------------------------------- tag set manager
+  function mgrTarget() { return tagSet(state.mgrSet) || activeSet(); }
+
+  function afterSchemeChange() {
+    saveScheme();
+    renderLabels(); renderLabelFilter(); renderAll(); renderManager();
+  }
+
+  function renderManager() {
+    var set = mgrTarget();
+    state.mgrSet = set.id;
+
+    // which set is being edited
+    els.mgrSetSelect.innerHTML = "";
+    state.tagSets.forEach(function (s) {
+      var o = document.createElement("option");
+      o.value = s.id;
+      o.textContent = s.name + (s.id === state.activeSet ? "  · active" : "");
+      if (s.id === set.id) o.selected = true;
+      els.mgrSetSelect.appendChild(o);
+    });
+    els.mgrSetCount.textContent = set.labels.length + " label" + (set.labels.length === 1 ? "" : "s") +
+      (set.id === state.activeSet ? " · this is the set you are tagging with" : "");
+
+    // labels in the set, in order, with reordering and removal
+    els.mgrInSet.innerHTML = "";
+    set.labels.forEach(function (name, i) {
+      var def = labelDef(name) || { name: name, color: NER.colorForName(name), desc: "" };
+      var b = document.createElement("button");
+      b.className = "lab removable";
+      b.style.setProperty("--lab-color", def.color);
+      b.title = "Remove “" + name + "” from " + set.name;
+      b.appendChild(document.createTextNode(name));
+      if (i < 9) { var k = document.createElement("kbd"); k.textContent = String(i + 1); b.appendChild(k); }
+      b.onclick = function (e) {
+        if (e.target.classList.contains("arrow")) return;
+        set.labels.splice(i, 1);
+        afterSchemeChange();
+      };
+      [["▲", -1], ["▼", 1]].forEach(function (pair) {
+        var a = document.createElement("span");
+        a.className = "arrow"; a.textContent = pair[0];
+        a.onclick = function (e) {
+          e.stopPropagation();
+          var j = i + pair[1];
+          if (j < 0 || j >= set.labels.length) return;
+          var tmp = set.labels[i]; set.labels[i] = set.labels[j]; set.labels[j] = tmp;
+          afterSchemeChange();
+        };
+        b.appendChild(a);
+      });
+      els.mgrInSet.appendChild(b);
+    });
+    if (!set.labels.length) els.mgrInSet.innerHTML = '<span class="muted small">Empty — add labels from the catalog below.</span>';
+
+    // catalog labels not yet in this set
+    els.mgrNotInSet.innerHTML = "";
+    var spare = state.labels.filter(function (l) { return set.labels.indexOf(l.name) < 0; });
+    spare.forEach(function (l) {
+      var b = document.createElement("button");
+      b.className = "lab addable";
+      b.textContent = l.name;
+      b.title = l.desc || ("Add " + l.name + " to " + set.name);
+      b.onclick = function () { set.labels.push(l.name); afterSchemeChange(); };
+      els.mgrNotInSet.appendChild(b);
+    });
+    els.mgrCatalogNote.textContent = spare.length
+      ? "Click to add. Every label keeps the same colour and definition in every set."
+      : "Every label in the catalog is already in this set.";
+
+    renderLabsTable();
+  }
+
   function renderLabsTable() {
     els.labsBody.innerHTML = "";
     state.labels.forEach(function (l, i) {
@@ -1456,7 +1749,11 @@ var NER = (function () {
       var tdC = document.createElement("td");
       var color = document.createElement("input");
       color.type = "color"; color.value = l.color;
-      color.oninput = function () { l.color = color.value; saveLabels(); renderLabels(); renderText(); renderEntList(); renderStats(); };
+      color.oninput = function () {
+        l.color = color.value; saveScheme();
+        renderLabels(); renderText(); renderEntList(); renderStats();
+        renderManager();
+      };
       tdC.appendChild(color); tr.appendChild(tdC);
 
       var tdN = document.createElement("td");
@@ -1467,18 +1764,28 @@ var NER = (function () {
         if (!v) { name.value = l.name; return; }
         if (v !== l.name && labelDef(v)) { toast("“" + v + "” already exists.", "error"); name.value = l.name; return; }
         var n = countSpansWithLabel(l.name);
-        if (n && !confirm("Rename “" + l.name + "” to “" + v + "” in the scheme and on " + n + " existing spans?")) { name.value = l.name; return; }
+        if (n && !confirm("Rename “" + l.name + "” to “" + v + "” everywhere, including on " + n + " existing spans?")) { name.value = l.name; return; }
         if (n) renameLabelEverywhere(l.name, v);
-        l.name = v; saveLabels();
-        renderLabels(); renderLabelFilter(); renderAll(); renderLabsTable();
+        var old = l.name;
+        state.tagSets.forEach(function (s) {
+          var at = s.labels.indexOf(old);
+          if (at >= 0) s.labels[at] = v;
+        });
+        l.name = v;
+        afterSchemeChange();
       };
       tdN.appendChild(name); tr.appendChild(tdN);
 
       var tdD = document.createElement("td");
       var desc = document.createElement("input");
       desc.type = "text"; desc.value = l.desc || ""; desc.placeholder = "what counts as this label";
-      desc.onchange = function () { l.desc = desc.value; saveLabels(); renderLabels(); };
+      desc.onchange = function () { l.desc = desc.value; saveScheme(); renderLabels(); };
       tdD.appendChild(desc); tr.appendChild(tdD);
+
+      var tdS = document.createElement("td");
+      tdS.className = "small muted";
+      tdS.textContent = setsUsing(l.name);
+      tr.appendChild(tdS);
 
       var tdU = document.createElement("td");
       tdU.className = "small muted";
@@ -1487,16 +1794,21 @@ var NER = (function () {
 
       var tdX = document.createElement("td");
       var del = document.createElement("button");
-      del.className = "btn sm ghost"; del.textContent = "✕"; del.title = "Remove from scheme";
+      del.className = "btn sm ghost"; del.textContent = "✕"; del.title = "Delete from the catalog and every set";
       del.onclick = function () {
-        var n = countSpansWithLabel(l.name);
+        var n = countSpansWithLabel(l.name), inSets = setsUsing(l.name);
+        var msg = "Delete “" + l.name + "” from the catalog";
+        if (inSets) msg += " and from " + inSets + " tag set" + (inSets === 1 ? "" : "s");
+        msg += ".";
         if (n) {
-          var also = confirm(n + " spans use “" + l.name + "”.\n\nOK — delete the label and those spans.\nCancel — keep the spans and only remove it from the palette.");
-          if (also) removeLabelSpans(l.name);
-        }
+          if (!confirm(msg + "\n\n" + n + " spans use it.\n\nOK — delete those spans too.\nCancel — stop, change nothing.")) return;
+          removeLabelSpans(l.name);
+        } else if (!confirm(msg)) return;
+        state.tagSets.forEach(function (s) {
+          s.labels = s.labels.filter(function (x) { return x !== l.name; });
+        });
         state.labels.splice(i, 1);
-        saveLabels();
-        renderLabels(); renderLabelFilter(); renderAll(); renderLabsTable();
+        afterSchemeChange();
       };
       tdX.appendChild(del); tr.appendChild(tdX);
 
@@ -1511,7 +1823,7 @@ var NER = (function () {
   }
 
   function init() {
-    loadLabels();
+    loadScheme();
     renderLabels(); renderLabelFilter(); renderAll();
 
     els.brandSub.textContent = CAN_FS ? "· saves straight back to your file" : "· exports to your downloads folder";
@@ -1580,18 +1892,72 @@ var NER = (function () {
       if (e.key === "Enter") { if (addLabel(els.newLabel.value)) els.newLabel.value = ""; }
     };
 
-    // label manager
-    $("btnManage").onclick = function () { renderLabsTable(); $("manageModal").hidden = false; };
+    // switching the set you tag with
+    els.tagSetSelect.onchange = function () {
+      state.activeSet = els.tagSetSelect.value;
+      saveScheme();
+      renderLabels(); renderEntList();
+      toast("Tagging with “" + activeSet().name + "”.");
+    };
+
+    // tag set manager
+    $("btnManage").onclick = function () {
+      state.mgrSet = state.activeSet;
+      renderManager();
+      $("manageModal").hidden = false;
+    };
     $("btnLabClose").onclick = function () { $("manageModal").hidden = true; };
+    els.mgrSetSelect.onchange = function () { state.mgrSet = els.mgrSetSelect.value; renderManager(); };
+
+    $("btnSetNew").onclick = function () {
+      var n = prompt("Name for the new tag set:", "My tag set");
+      if (!n || !n.trim()) return;
+      var s = { id: newSetId(), name: n.trim(), labels: [] };
+      state.tagSets.push(s);
+      state.mgrSet = s.id;
+      afterSchemeChange();
+      toast("Created “" + s.name + "”. Add labels to it below.");
+    };
+    $("btnSetDup").onclick = function () {
+      var src = mgrTarget();
+      var n = prompt("Name for the copy:", src.name + " (copy)");
+      if (!n || !n.trim()) return;
+      var s = { id: newSetId(), name: n.trim(), labels: src.labels.slice() };
+      state.tagSets.push(s);
+      state.mgrSet = s.id;
+      afterSchemeChange();
+    };
+    $("btnSetRename").onclick = function () {
+      var s = mgrTarget();
+      var n = prompt("Rename this tag set:", s.name);
+      if (!n || !n.trim()) return;
+      s.name = n.trim();
+      afterSchemeChange();
+    };
+    $("btnSetDelete").onclick = function () {
+      var s = mgrTarget();
+      if (state.tagSets.length === 1) { toast("At least one tag set has to exist.", "error"); return; }
+      if (!confirm("Delete the tag set “" + s.name + "”?\n\nIts labels stay in the catalog and no spans are touched.")) return;
+      state.tagSets = state.tagSets.filter(function (x) { return x.id !== s.id; });
+      if (state.activeSet === s.id) state.activeSet = state.tagSets[0].id;
+      state.mgrSet = state.tagSets[0].id;
+      afterSchemeChange();
+    };
+
     $("btnLabAdd").onclick = function () {
-      var n = prompt("New label name (e.g. ROAD, WATERBODY, ADDRESS):");
-      if (n && addLabel(n)) renderLabsTable();
+      var n = prompt("New label name (e.g. ROAD, WATERBODY, ZIP):");
+      if (!n) return;
+      if (addLabel(n, null, "", mgrTarget().id)) renderManager();
     };
     $("btnLabDefaults").onclick = function () {
-      if (!confirm("Replace the palette with the eight default labels? Existing spans keep their labels.")) return;
-      state.labels = NER.DEFAULT_LABELS.map(function (l) { return { name: l.name, color: l.color, desc: l.desc }; });
-      adoptLabelsFromData(); saveLabels();
-      renderLabels(); renderLabelFilter(); renderAll(); renderLabsTable();
+      if (!confirm("Restore the default label catalog and the three default tag sets?\n\nYour own sets are removed. Existing spans keep their labels and nothing in the data is changed.")) return;
+      state.labels = defaultLabels();
+      state.tagSets = defaultTagSets();
+      state.activeSet = state.tagSets[0].id;
+      state.mgrSet = state.activeSet;
+      adoptLabelsFromData();
+      afterSchemeChange();
+      toast("Defaults restored.");
     };
     $("btnLabExport").onclick = function () { doExport("scheme"); };
     $("btnLabImport").onclick = function () { $("schemePicker").click(); };
@@ -1602,6 +1968,7 @@ var NER = (function () {
       r.onload = function () {
         try {
           var obj = JSON.parse(String(r.result));
+          // v1 was a bare labels array or {labels:[…]}; v2 adds tagSets.
           var list = Array.isArray(obj) ? obj : obj.labels;
           if (!Array.isArray(list)) throw new Error("expected a labels array");
           state.labels = list.map(function (l, i) {
@@ -1609,11 +1976,28 @@ var NER = (function () {
               ? { name: l, color: NER.PALETTE[i % NER.PALETTE.length], desc: "" }
               : { name: String(l.name), color: l.color || NER.PALETTE[i % NER.PALETTE.length], desc: l.desc || "" };
           }).filter(function (l) { return l.name; });
-          adoptLabelsFromData(); saveLabels();
-          renderLabels(); renderLabelFilter(); renderAll(); renderLabsTable();
-          toast("Imported " + state.labels.length + " labels.");
+
+          if (obj && Array.isArray(obj.tagSets) && obj.tagSets.length) {
+            state.tagSets = obj.tagSets.map(function (s, i) {
+              return {
+                id: String(s.id || ("set" + (i + 1))),
+                name: String(s.name || ("Set " + (i + 1))),
+                labels: (Array.isArray(s.labels) ? s.labels : []).map(String)
+              };
+            });
+          } else {
+            // A v1 scheme has no sets, so everything imported becomes one.
+            state.tagSets = [{ id: "imported", name: "Imported labels",
+                               labels: state.labels.map(function (l) { return l.name; }) }];
+          }
+          ensureCatalogCovers(allSetLabels());
+          state.activeSet = (obj && obj.activeTagSet && tagSet(obj.activeTagSet)) ? obj.activeTagSet : state.tagSets[0].id;
+          state.mgrSet = state.activeSet;
+          adoptLabelsFromData();
+          afterSchemeChange();
+          toast("Imported " + state.labels.length + " labels in " + state.tagSets.length + " tag set" + (state.tagSets.length === 1 ? "" : "s") + ".");
         } catch (err) {
-          toast("Not a label scheme: " + err.message, "error");
+          toast("Not a tag set file: " + err.message, "error");
         }
       };
       r.readAsText(f, "utf-8");
@@ -1687,7 +2071,7 @@ var NER = (function () {
         e.preventDefault(); removeEntity(state.selectedEnt); return;
       }
       if (/^[1-9]$/.test(e.key)) {
-        var l = state.labels[parseInt(e.key, 10) - 1];
+        var l = activeLabels()[parseInt(e.key, 10) - 1];
         if (l) { e.preventDefault(); applyLabel(l.name); }
       }
     });
@@ -1743,7 +2127,10 @@ var NER = (function () {
       state: state, els: els,
       adoptDataset: adoptDataset, applyLabel: applyLabel, removeEntity: removeEntity,
       go: go, goToAbsolute: goToAbsolute, nextUnlabeled: nextUnlabeled,
-      computeView: computeView, renderAll: renderAll, selectionOffsets: selectionOffsets
+      computeView: computeView, renderAll: renderAll, selectionOffsets: selectionOffsets,
+      activeLabels: activeLabels, activeSet: activeSet, tagSet: tagSet,
+      addLabel: addLabel, renderLabels: renderLabels, renderManager: renderManager,
+      defaultLabels: defaultLabels, defaultTagSets: defaultTagSets, saveScheme: saveScheme
     };
   }
 

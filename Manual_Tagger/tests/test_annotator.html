@@ -79,32 +79,66 @@
 
   // file:// blocks same-origin access into the frame, so say so plainly
   // instead of reporting a wall of false failures.
-  frame.onload = function () {
+  function unreachable(e) {
+    summary.className = "fail";
+    summary.textContent = "Cannot reach the annotator inside the frame.";
+    results.innerHTML =
+      '<div class="note"><b>Serve this folder over http instead of opening it from disk.</b><br><br>' +
+      "Browsers refuse cross-frame access between <code>file://</code> pages, so the tests cannot see the tool. " +
+      "From the repo root run:<br><br><code>python -m http.server 8000</code><br><br>" +
+      "then open <code>http://localhost:8000/Manual_Tagger/tests/test_annotator.html</code>.<br><br>" +
+      "<span style=\"color:var(--muted)\">(" + e.message + ")</span></div>";
+  }
+
+  // The frame's load event can beat the app's own start-up, so wait for both
+  // the core and the booted app rather than assuming they are there.
+  function whenReady(tries) {
     var win;
     try {
       win = frame.contentWindow;
-      if (!win.NER) throw new Error("NER core not found in the frame");
+      if (!win) throw new Error("no window in the frame");
+      if (!win.NER || !win.__NER_APP__) {
+        if (tries < 150) { setTimeout(function () { whenReady(tries + 1); }, 20); return; }
+        throw new Error("the annotator did not finish starting");
+      }
     } catch (e) {
-      summary.className = "fail";
-      summary.textContent = "Cannot reach the annotator inside the frame.";
-      results.innerHTML =
-        '<div class="note"><b>Serve this folder over http instead of opening it from disk.</b><br><br>' +
-        "Browsers refuse cross-frame access between <code>file://</code> pages, so the tests cannot see the tool. " +
-        "From the repo root run:<br><br><code>python -m http.server 8000</code><br><br>" +
-        "then open <code>http://localhost:8000/Manual_Tagger/tests/test_annotator.html</code>.<br><br>" +
-        "<span style=\"color:var(--muted)\">(" + e.message + ")</span></div>";
+      unreachable(e);
       return;
     }
+    start(win);
+  }
+
+  function start(win) {
+    // The suite drives the real app, so it must not disturb the person running
+    // it: autosave is switched off for the duration and the tag sets are put
+    // back exactly as they were, whatever happens.
+    var APP = win.__NER_APP__;
+    var savedScheme = JSON.stringify({
+      labels: APP.state.labels, sets: APP.state.tagSets, active: APP.state.activeSet
+    });
+    APP.state.storage = null;
     try {
-      run(win, win.NER, win.__NER_APP__);
+      run(win, win.NER, APP);
     } catch (e) {
+      if (!group) G("Suite");
       ok("suite ran to completion", false, e && e.stack ? e.stack : String(e));
+    } finally {
+      try {
+        var s = JSON.parse(savedScheme);
+        APP.state.labels = s.labels;
+        APP.state.tagSets = s.sets;
+        APP.state.activeSet = s.active;
+        APP.saveScheme();
+        APP.renderLabels();
+      } catch (e2) { /* nothing worth failing the run over */ }
     }
     summary.className = failed ? "fail" : "pass";
     summary.textContent = failed
       ? failed + " failed, " + passed + " passed"
       : "All " + passed + " tests passed";
-  };
+  }
+
+  frame.onload = function () { whenReady(0); };
 
   // ------------------------------------------------------------------ tests
   function run(win, NER, APP) {
@@ -303,6 +337,114 @@
     eq("real data round trip: Comments", backReal.records.map(function (r) { return r.Comments; }), REAL.map(function (r) { return r.Comments; }));
     var conllReal = NER.toCoNLL([APP.state.records[0]]).split("\n");
     eq("CoNLL on real text", conllReal.filter(function (l) { return /^Campo|^I-8/.test(l); }), ["Campo B-GPE", "I-8. B-FAC"]);
+
+    G("Tag sets");
+    var sets = APP.defaultTagSets();
+    APP.state.labels = APP.defaultLabels();
+    APP.state.tagSets = sets;
+    APP.state.activeSet = sets[0].id;
+    APP.renderLabels();
+
+    eq("three presets ship by default", sets.map(function (s) { return s.name; }),
+      ["Core entities", "Geospatial + social", "Street addresses"]);
+    eq("preset 1", APP.tagSet("core").labels, ["GPE", "ORG", "PERSON", "NORP"]);
+    eq("preset 2", APP.tagSet("geosoc").labels, ["GPE", "LOC", "FAC", "PERSON", "NORP", "EVENT", "HASH"]);
+    eq("preset 3", APP.tagSet("address").labels, ["GPE", "LOC", "FAC", "ADD"]);
+
+    var addDef = APP.state.labels.filter(function (l) { return l.name === "ADD"; })[0];
+    ok("ADD is in the catalog", !!addDef);
+    ok("ADD's definition carries the address examples", !!addDef && /Jefferson|Main St/.test(addDef.desc), addDef && addDef.desc);
+
+    function quickPickNames() {
+      return Array.prototype.map.call(els.quickLabels.querySelectorAll(".lab"), function (b) {
+        return b.firstChild.textContent;
+      });
+    }
+    eq("quick picks follow the active set", quickPickNames(), ["GPE", "ORG", "PERSON", "NORP"]);
+    APP.state.activeSet = "address"; APP.renderLabels();
+    eq("switching the set switches the palette", quickPickNames(), ["GPE", "LOC", "FAC", "ADD"]);
+    eq("and the number keys with it", APP.activeLabels().map(function (l) { return l.name; }), ["GPE", "LOC", "FAC", "ADD"]);
+
+    // editing a preset
+    APP.state.activeSet = "geosoc";
+    APP.addLabel("ADD");
+    ok("a catalog label can be added to a preset", APP.tagSet("geosoc").labels.indexOf("ADD") >= 0);
+    APP.addLabel("ROAD");
+    ok("a brand new label lands in the catalog", APP.state.labels.some(function (l) { return l.name === "ROAD"; }));
+    ok("and in the set it was added from", APP.tagSet("geosoc").labels.indexOf("ROAD") >= 0);
+    APP.tagSet("geosoc").labels = APP.tagSet("geosoc").labels.filter(function (n) { return n !== "HASH"; });
+    APP.renderLabels();
+    ok("a label can be taken back out of a preset", APP.tagSet("geosoc").labels.indexOf("HASH") < 0);
+    ok("removing it from a set keeps it in the catalog", APP.state.labels.some(function (l) { return l.name === "HASH"; }));
+
+    // a fourth, user-made set
+    APP.state.tagSets.push({ id: "mine", name: "My set", labels: ["GPE", "ADD"] });
+    APP.state.activeSet = "mine"; APP.renderLabels();
+    eq("a fourth set can be created and used", quickPickNames(), ["GPE", "ADD"]);
+    eq("four sets now exist", APP.state.tagSets.length, 4);
+
+    // tagging with a label the active set does not contain still renders right
+    APP.state.activeSet = "address"; APP.renderLabels();
+    eq("a set's label order drives the hotkey order", APP.activeLabels()[3].name, "ADD");
+
+    G("Spans cannot overlap");
+    eq("findOverlaps reports every clash", NER.findOverlaps([[0, 5, "A"], [10, 15, "B"]], 3, 12, -1), [0, 1]);
+    eq("touching spans do not count as overlapping", NER.findOverlaps([[0, 5, "A"]], 5, 9, -1), []);
+    eq("a span may be edited past itself", NER.findOverlaps([[0, 5, "A"]], 0, 8, 0), []);
+    eq("resolveOverlaps keeps the longest of a cluster",
+      NER.resolveOverlaps([[0, 9, "GPE"], [0, 26, "ORG"], [30, 35, "X"]]), [[0, 26, "ORG"], [30, 35, "X"]]);
+
+    var OT = "San Diego Sheriff's Office arrested a man in Fallbrook";
+    APP.adoptDataset({ records: [NER.normalizeRecord({ id: 1, text: OT, Comments: [], label: [] }, 0)], labels: null }, "ov.json");
+    APP.state.pending = { start: 0, end: 9 };
+    APP.applyLabel("GPE");
+    eq("first span added normally", APP.state.records[0].label, [[0, 9, "GPE"]]);
+
+    var realConfirm = win.confirm;
+    win.confirm = function () { return false; };
+    APP.state.pending = { start: 0, end: 26 };
+    APP.applyLabel("ORG");
+    eq("declining the overlap prompt changes nothing", APP.state.records[0].label, [[0, 9, "GPE"]]);
+
+    win.confirm = function () { return true; };
+    APP.state.pending = { start: 0, end: 26 };
+    APP.applyLabel("ORG");
+    eq("accepting replaces the span it covered", APP.state.records[0].label, [[0, 26, "ORG"]]);
+    win.confirm = realConfirm;
+
+    APP.state.pending = { start: 45, end: 54 };
+    APP.applyLabel("GPE");
+    eq("a disjoint span is added without a prompt", APP.state.records[0].label, [[0, 26, "ORG"], [45, 54, "GPE"]]);
+
+    var anyOverlap = false;
+    var L = APP.state.records[0].label;
+    for (var oi = 0; oi < L.length; oi++)
+      for (var oj = oi + 1; oj < L.length; oj++)
+        if (NER.spansOverlap(L[oi], L[oj])) anyOverlap = true;
+    ok("the no-overlap invariant holds", !anyOverlap);
+
+    // the other way in: editing offsets by hand
+    APP.renderAll();
+    var firstItem = els.entList.querySelectorAll(".ent-item")[0];
+    var endInput = firstItem.querySelectorAll('input[type="number"]')[1];
+    endInput.value = "50";                       // would run into the 45-54 span
+    endInput.dispatchEvent(new win.Event("change"));
+    eq("an overlapping hand edit is rejected", APP.state.records[0].label[0], [0, 26, "ORG"]);
+    endInput.value = "35";                       // out to "arrested", still disjoint
+    endInput.dispatchEvent(new win.Event("change"));
+    eq("a non-overlapping hand edit is accepted", APP.state.records[0].label[0], [0, 35, "ORG"]);
+
+    G("Both export shapes survive");
+    eq("the export menu still offers spans and BIO",
+      Array.prototype.map.call(doc.querySelectorAll("#exportMenu button[data-export]"), function (b) { return b.dataset.export; }),
+      ["json", "jsonl", "bundle", "conll", "scheme"]);
+    var spanRt = NER.parseDataset(NER.toJSON(APP.state.records));
+    eq("span export still round trips", spanRt.records[0].label, NER.sortSpans(APP.state.records[0].label));
+    var bio = NER.toCoNLL(APP.state.records).split("\n");
+    eq("BIO marks the entity's first token B- and the rest I-", bio.slice(0, 5),
+      ["San B-ORG", "Diego I-ORG", "Sheriff's I-ORG", "Office I-ORG", "arrested I-ORG"]);
+    eq("BIO starts a new entity at the next span", bio.filter(function (l) { return /^Fallbrook/.test(l); }), ["Fallbrook B-GPE"]);
+    eq("BIO marks untagged tokens O", bio.filter(function (l) { return /^man/.test(l); }), ["man O"]);
 
     G("Scale");
     var big = [];
