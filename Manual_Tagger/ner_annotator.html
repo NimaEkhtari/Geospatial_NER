@@ -1,0 +1,1755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NER Annotator</title>
+<!--
+  NER Annotator - a single-file, zero-dependency span annotation tool.
+
+  No CDN, no build step, no network access required. Open the file in any
+  modern browser (Chrome, Edge, Firefox, Safari) and it works offline.
+
+  Data format (Doccano-compatible):
+    [{ "id": 1, "text": "...", "Comments": [], "label": [[start, end, "LABEL"], ...] }, ...]
+
+  Also reads: JSONL, {labels, examples:[...]} bundles, and span fields named
+  "label", "entities", "spans" or "annotations" (array or {start,end,label} form).
+  Unknown fields on a record are preserved and written back on export.
+-->
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --panel-2: #fbfcfd;
+    --text: #16181d;
+    --muted: #666d7a;
+    --border: #dfe3e8;
+    --border-strong: #c3cad4;
+    --accent: #2563eb;
+    --accent-text: #ffffff;
+    --danger: #dc2626;
+    --ok: #15803d;
+    --warn: #b45309;
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.1);
+    --radius: 10px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  :root[data-theme="dark"], :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {}
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --panel-2: #1c2029;
+      --text: #e8eaed;
+      --muted: #9aa3b2;
+      --border: #2a2f3a;
+      --border-strong: #3a4150;
+      --accent: #60a5fa;
+      --accent-text: #0b1020;
+      --danger: #f87171;
+      --ok: #4ade80;
+      --warn: #fbbf24;
+      --shadow: 0 1px 2px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1c2029;
+    --text: #e8eaed;
+    --muted: #9aa3b2;
+    --border: #2a2f3a;
+    --border-strong: #3a4150;
+    --accent: #60a5fa;
+    --accent-text: #0b1020;
+    --danger: #f87171;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--sans); font-size: 15px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+
+  /* ---------- shell ---------- */
+  .topbar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 16px; background: var(--panel);
+    border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 30;
+  }
+  .brand { font-weight: 650; letter-spacing: -.01em; white-space: nowrap; }
+  .brand small { font-weight: 450; color: var(--muted); margin-left: 6px; }
+  .filechip {
+    font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px;
+    min-width: 0;
+  }
+  .filechip b { color: var(--text); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 30ch; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; }
+  .dot.dirty { background: var(--warn); }
+  .spacer { flex: 1 1 auto; }
+
+  .btn {
+    border: 1px solid var(--border-strong); background: var(--panel-2);
+    padding: 6px 11px; border-radius: 8px; box-shadow: var(--shadow);
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--accent); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; font-weight: 550; }
+  .btn.icon { padding: 6px 9px; }
+  .btn.sm { padding: 3px 8px; font-size: 13px; border-radius: 7px; }
+  .btn.ghost { background: transparent; border-color: transparent; box-shadow: none; color: var(--muted); }
+  .btn.ghost:hover { color: var(--text); background: var(--panel-2); }
+
+  .menuwrap { position: relative; }
+  .menu {
+    position: absolute; right: 0; top: calc(100% + 6px); min-width: 230px;
+    background: var(--panel); border: 1px solid var(--border-strong);
+    border-radius: var(--radius); box-shadow: 0 10px 30px rgba(16,24,40,.18);
+    padding: 5px; z-index: 40;
+  }
+  .menu[hidden] { display: none; }
+  .menu button {
+    display: block; width: 100%; text-align: left; background: none; border: 0;
+    padding: 8px 10px; border-radius: 7px; font-size: 14px;
+  }
+  .menu button:hover { background: var(--panel-2); }
+  .menu button small { display: block; color: var(--muted); font-size: 12px; }
+  .menu hr { border: 0; border-top: 1px solid var(--border); margin: 5px 2px; }
+
+  main {
+    display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px;
+    padding: 16px; align-items: start; max-width: 1500px; margin: 0 auto;
+  }
+  @media (max-width: 980px) { main { grid-template-columns: minmax(0,1fr); } }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px;
+  }
+  .card + .card { margin-top: 16px; }
+  .card h2 {
+    margin: 0 0 10px; font-size: 13px; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted); font-weight: 600;
+  }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  /* ---------- navigation ---------- */
+  .navrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .counter { font-variant-numeric: tabular-nums; font-size: 14px; color: var(--muted); }
+  .counter b { color: var(--text); }
+  .jump { width: 82px; text-align: right; }
+  input[type="text"], input[type="number"], input[type="search"], select, textarea {
+    background: var(--panel-2); border: 1px solid var(--border-strong);
+    border-radius: 8px; padding: 5px 9px;
+  }
+  input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+  .progress { height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; margin-bottom: 12px; }
+  .progress i { display: block; height: 100%; background: var(--ok); width: 0; transition: width .2s; }
+
+  /* ---------- the text being annotated ---------- */
+  .textbox {
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--panel-2); padding: 18px 16px;
+    font-size: 19px; line-height: 2.1; white-space: pre-wrap; word-wrap: break-word;
+    min-height: 120px; user-select: text; cursor: text;
+  }
+  .textbox .ent {
+    background: var(--ent-color); color: #fff; border-radius: 4px;
+    padding: 2px 0; box-decoration-break: clone; -webkit-box-decoration-break: clone;
+    cursor: pointer; position: relative;
+  }
+  .textbox .ent.ent-start { padding-left: 3px; border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
+  .textbox .ent.ent-end { padding-right: 3px; }
+  .textbox .ent:not(.ent-start) { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+  .textbox .ent:not(.ent-end) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+  /* The label chip is a pseudo-element on purpose: it is not part of
+     textContent and not selectable, so character offsets stay exact. */
+  .textbox .ent.ent-end::after {
+    content: attr(data-chip); font-family: var(--sans); font-size: 9.5px;
+    font-weight: 700; letter-spacing: .04em; vertical-align: super;
+    margin-left: 3px; opacity: .92; user-select: none;
+  }
+  .textbox .ent.is-selected { box-shadow: 0 0 0 2px var(--text); }
+  .textbox .ent.ent-overlap { background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 4px, transparent 4px 8px); }
+  .textbox .empty { color: var(--muted); font-size: 15px; }
+
+  .selbar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-top: 10px; font-size: 13px; color: var(--muted); min-height: 26px;
+  }
+  .selbar code { font-family: var(--mono); background: var(--panel-2); padding: 1px 6px; border-radius: 5px; border: 1px solid var(--border); }
+  .selbar .quote { color: var(--text); font-weight: 550; }
+
+  /* ---------- labels ---------- */
+  .labels { display: flex; flex-wrap: wrap; gap: 7px; }
+  .lab {
+    display: inline-flex; align-items: center; gap: 6px; color: #fff;
+    background: var(--lab-color); border: 0; border-radius: 8px;
+    padding: 5px 9px; font-size: 13px; font-weight: 600; box-shadow: var(--shadow);
+  }
+  .lab kbd {
+    font-family: var(--mono); font-size: 10px; background: rgba(255,255,255,.25);
+    border-radius: 4px; padding: 0 4px; font-weight: 700;
+  }
+  .lab:hover { filter: brightness(1.08); }
+
+  /* ---------- entity list ---------- */
+  .ent-item {
+    border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px;
+    background: var(--panel-2); margin-bottom: 7px;
+  }
+  .ent-item.is-selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .ent-item .top { display: flex; align-items: center; gap: 8px; }
+  .swatch { width: 11px; height: 11px; border-radius: 3px; background: var(--ent-color); flex: none; }
+  .ent-item .txt { font-size: 14px; margin-top: 4px; word-break: break-word; }
+  .ent-item .off { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  .ent-item input[type="number"] { width: 68px; }
+
+  /* ---------- sidebar bits ---------- */
+  .stat { display: flex; justify-content: space-between; font-size: 13.5px; padding: 2px 0; }
+  .stat span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .bar { height: 6px; border-radius: 3px; background: var(--lab-color); }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip {
+    font-size: 12px; border: 1px solid var(--border-strong); background: var(--panel-2);
+    border-radius: 999px; padding: 2px 9px;
+  }
+  .chip.on { background: var(--accent); color: var(--accent-text); border-color: transparent; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12.5px; }
+  .warnbox { border-left: 3px solid var(--warn); padding: 6px 10px; background: var(--panel-2); border-radius: 0 8px 8px 0; font-size: 13px; }
+
+  /* ---------- modal ---------- */
+  .modal-bg {
+    position: fixed; inset: 0; background: rgba(9,12,18,.55); z-index: 50;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal-bg[hidden] { display: none; }
+  .modal {
+    background: var(--panel); border-radius: 14px; border: 1px solid var(--border-strong);
+    box-shadow: 0 24px 60px rgba(0,0,0,.35); width: min(720px, 100%);
+    max-height: 85vh; overflow: auto; padding: 18px 20px;
+  }
+  .modal h3 { margin: 0 0 4px; font-size: 18px; }
+  .modal .sub { color: var(--muted); font-size: 13.5px; margin-bottom: 14px; }
+  table.labs { width: 100%; border-collapse: collapse; }
+  table.labs th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 4px 6px; }
+  table.labs td { padding: 4px 6px; vertical-align: middle; }
+  table.labs input[type="text"] { width: 100%; }
+  table.labs input[type="color"] {
+    width: 34px; height: 28px; padding: 0; border: 1px solid var(--border-strong);
+    border-radius: 6px; background: none;
+  }
+  .kbdlist { display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; font-size: 14px; }
+  .kbdlist kbd {
+    font-family: var(--mono); font-size: 12px; border: 1px solid var(--border-strong);
+    border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; background: var(--panel-2);
+  }
+
+  /* ---------- toast ---------- */
+  #toast {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%) translateY(12px);
+    background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 9px;
+    font-size: 14px; box-shadow: 0 8px 24px rgba(0,0,0,.25); opacity: 0;
+    transition: opacity .18s, transform .18s; pointer-events: none; z-index: 60; max-width: 80vw;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #banner {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    padding: 9px 16px; background: var(--panel-2); border-bottom: 1px solid var(--border); font-size: 14px;
+  }
+  #banner[hidden] { display: none; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">NER Annotator<small id="brandSub">span tagging for tweets</small></div>
+  <div class="filechip" id="fileChip" hidden><span class="dot" id="dirtyDot"></span><b id="fileName"></b><span id="fileMeta"></span></div>
+  <div class="spacer"></div>
+  <button class="btn" id="btnOpen">Open data…</button>
+  <button class="btn" id="btnSave">Save</button>
+  <div class="menuwrap">
+    <button class="btn" id="btnExport">Export ▾</button>
+    <div class="menu" id="exportMenu" hidden>
+      <button data-export="json">JSON <small>same schema as the input file</small></button>
+      <button data-export="jsonl">JSONL <small>one record per line</small></button>
+      <button data-export="bundle">JSON bundle <small>labels + records, for sharing a task</small></button>
+      <button data-export="conll">CoNLL / BIO <small>token-per-line, for training</small></button>
+      <hr />
+      <button data-export="scheme">Label scheme <small>just the tag set, to share with annotators</small></button>
+    </div>
+  </div>
+  <button class="btn icon" id="btnTheme" title="Toggle light / dark">◐</button>
+  <button class="btn icon" id="btnHelp" title="Keyboard shortcuts (?)">?</button>
+  <input type="file" id="filePicker" accept=".json,.jsonl,.txt,application/json" hidden />
+  <input type="file" id="schemePicker" accept=".json" hidden />
+</header>
+
+<div id="banner" hidden><span id="bannerText"></span><span class="spacer"></span><span id="bannerActions"></span></div>
+
+<main>
+  <section>
+    <!-- ---------- annotation workspace ---------- -->
+    <div class="card">
+      <div class="navrow">
+        <button class="btn" id="btnPrev" disabled>← Prev</button>
+        <button class="btn" id="btnNext" disabled>Next →</button>
+        <span class="counter" id="counter">No data loaded</span>
+        <span class="spacer"></span>
+        <label class="small muted" for="jump">Go to</label>
+        <input class="jump" type="number" id="jump" min="1" placeholder="#" />
+        <button class="btn sm" id="btnNextUnlabeled" title="Jump to the next record with no spans (u)">Next unlabeled</button>
+      </div>
+      <div class="progress"><i id="progressBar"></i></div>
+
+      <div class="textbox" id="textbox"><span class="empty">Open a JSON or JSONL file to begin — or press “Load sample” if you are running this from a web server.</span></div>
+
+      <div class="selbar" id="selbar"></div>
+
+      <div class="row" style="margin-top:12px">
+        <div class="labels" id="quickLabels"></div>
+      </div>
+    </div>
+
+    <!-- ---------- entities on this record ---------- -->
+    <div class="card">
+      <h2>Spans on this record <span id="entCount" class="muted"></span></h2>
+      <div id="entList"><div class="muted small">Nothing tagged yet. Select text above, then click a label or press its number key.</div></div>
+    </div>
+
+    <!-- ---------- comments ---------- -->
+    <div class="card">
+      <h2>Notes for this record</h2>
+      <textarea id="comments" rows="2" style="width:100%" placeholder="Free-text note, e.g. “north is LOC here”. One per line; saved to the record’s Comments field."></textarea>
+    </div>
+  </section>
+
+  <!-- ---------- sidebar ---------- -->
+  <aside>
+    <div class="card">
+      <h2>Label scheme <button class="btn sm ghost" id="btnManage" style="float:right;margin-top:-4px">Manage</button></h2>
+      <div class="labels" id="sideLabels"></div>
+      <div class="row" style="margin-top:10px">
+        <input type="text" id="newLabel" placeholder="New label, e.g. ROAD" style="flex:1;min-width:0" />
+        <button class="btn sm" id="btnAddLabel">Add</button>
+      </div>
+      <div class="small muted" style="margin-top:6px">Select text, then click a label (or press <kbd>1</kbd>–<kbd>9</kbd>). With a span selected, a label key re-tags it.</div>
+    </div>
+
+    <div class="card">
+      <h2>Find &amp; filter</h2>
+      <input type="search" id="search" placeholder="Search text…" style="width:100%" />
+      <div class="row" style="margin-top:8px">
+        <div class="chips" id="statusChips">
+          <button class="chip on" data-status="all">All</button>
+          <button class="chip" data-status="unlabeled">Unlabeled</button>
+          <button class="chip" data-status="labeled">Labeled</button>
+          <button class="chip" data-status="noted">Has note</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <select id="labelFilter" style="width:100%"><option value="">Any label</option></select>
+      </div>
+      <div class="small muted" id="filterInfo" style="margin-top:6px"></div>
+    </div>
+
+    <div class="card">
+      <h2>Dataset</h2>
+      <div id="stats"></div>
+      <div id="labelStats" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <h2>Data health</h2>
+      <div id="health" class="small muted">Load a file to check.</div>
+    </div>
+  </aside>
+</main>
+
+<div id="toast"></div>
+
+<!-- ---------- label manager modal ---------- -->
+<div class="modal-bg" id="manageModal" hidden>
+  <div class="modal">
+    <h3>Label scheme</h3>
+    <div class="sub">Rename a label and every existing span using it is renamed too. Colors and descriptions are yours to set; the scheme is remembered in this browser and can be exported as a small JSON file to share with other annotators.</div>
+    <table class="labs">
+      <thead><tr><th style="width:34px"></th><th style="width:26%">Name</th><th>Description shown on hover</th><th style="width:56px">Spans</th><th style="width:34px"></th></tr></thead>
+      <tbody id="labsBody"></tbody>
+    </table>
+    <div class="row" style="margin-top:12px">
+      <button class="btn sm" id="btnLabAdd">+ Add label</button>
+      <button class="btn sm" id="btnLabDefaults">Reset to defaults</button>
+      <button class="btn sm" id="btnLabImport">Import scheme…</button>
+      <button class="btn sm" id="btnLabExport">Export scheme</button>
+      <span class="spacer"></span>
+      <button class="btn primary" id="btnLabClose">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ---------- help modal ---------- -->
+<div class="modal-bg" id="helpModal" hidden>
+  <div class="modal">
+    <h3>Keyboard shortcuts</h3>
+    <div class="sub">Shortcuts are ignored while you are typing in a text box.</div>
+    <div class="kbdlist">
+      <div><kbd>→</kbd> / <kbd>n</kbd></div><div>Next record</div>
+      <div><kbd>←</kbd> / <kbd>p</kbd></div><div>Previous record</div>
+      <div><kbd>1</kbd> … <kbd>9</kbd></div><div>Tag the selected text with that label — or re-tag the selected span</div>
+      <div><kbd>Delete</kbd></div><div>Remove the selected span</div>
+      <div><kbd>Esc</kbd></div><div>Clear the selection</div>
+      <div><kbd>u</kbd></div><div>Jump to the next record with no spans</div>
+      <div><kbd>Ctrl</kbd>+<kbd>Z</kbd></div><div>Undo (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> to redo)</div>
+      <div><kbd>Ctrl</kbd>+<kbd>S</kbd></div><div>Save</div>
+      <div><kbd>/</kbd></div><div>Focus the search box</div>
+      <div><kbd>?</kbd></div><div>This dialog</div>
+    </div>
+    <h3 style="margin-top:18px">How saving works</h3>
+    <div class="sub" id="saveExplain"></div>
+    <div class="row"><span class="spacer"></span><button class="btn primary" id="btnHelpClose">Close</button></div>
+  </div>
+</div>
+
+<script>
+/* =====================================================================
+   core:start — pure functions, no DOM. Everything here is testable in
+   isolation; see tools/test_core.html.
+   ===================================================================== */
+var NER = (function () {
+  "use strict";
+
+  var DEFAULT_LABELS = [
+    { name: "GPE",    color: "#2563eb", desc: "Geo-political entity: countries, cities, states, counties" },
+    { name: "LOC",    color: "#0891b2", desc: "Non-GPE location: regions, mountains, rivers, roads, bodies of water" },
+    { name: "FAC",    color: "#7c3aed", desc: "Facility: buildings, airports, highways, bridges, piers, parks" },
+    { name: "ORG",    color: "#059669", desc: "Organization: companies, agencies, institutions, teams" },
+    { name: "PERSON", color: "#dc2626", desc: "People, including fictional" },
+    { name: "NORP",   color: "#db2777", desc: "Nationalities or religious / political groups" },
+    { name: "EVENT",  color: "#d97706", desc: "Named events: hurricanes, wildfires, battles, sports events" },
+    { name: "HASH",   color: "#65a30d", desc: "Hashtag or handle that carries entity meaning" }
+  ];
+
+  var PALETTE = [
+    "#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#0891b2",
+    "#db2777", "#65a30d", "#ea580c", "#4f46e5", "#0d9488", "#c026d3",
+    "#b45309", "#475569", "#9333ea", "#16a34a"
+  ];
+
+  // Stable fallback color for a label that is not in the scheme.
+  function colorForName(name) {
+    var h = 0;
+    for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    return PALETTE[h % PALETTE.length];
+  }
+
+  var TEXT_KEYS = ["text", "content", "sentence", "tweet", "body"];
+  var SPAN_KEYS = ["label", "labels", "entities", "spans", "annotations"];
+
+  function coerceSpan(sp) {
+    var s, e, l;
+    if (Array.isArray(sp) && sp.length >= 3) {
+      s = sp[0]; e = sp[1]; l = sp[2];
+    } else if (sp && typeof sp === "object") {
+      s = sp.start !== undefined ? sp.start : sp.start_offset;
+      e = sp.end !== undefined ? sp.end : sp.end_offset;
+      l = sp.label !== undefined ? sp.label : (sp.tag !== undefined ? sp.tag : sp.type);
+    } else {
+      return null;
+    }
+    s = Number(s); e = Number(e);
+    if (!isFinite(s) || !isFinite(e) || l === undefined || l === null) return null;
+    return [Math.round(s), Math.round(e), String(l)];
+  }
+
+  // Accepts a raw parsed record; returns the internal shape, keeping any
+  // fields we do not understand so they survive a round trip.
+  function normalizeRecord(raw, i) {
+    var rec = { id: null, text: "", label: [], Comments: [], _extra: {}, _spanKey: "label", _textKey: "text" };
+    if (typeof raw === "string") { rec.id = i + 1; rec.text = raw; return rec; }
+    if (!raw || typeof raw !== "object") { rec.id = i + 1; return rec; }
+
+    var k, j;
+    for (j = 0; j < TEXT_KEYS.length; j++) {
+      if (typeof raw[TEXT_KEYS[j]] === "string") { rec.text = raw[TEXT_KEYS[j]]; rec._textKey = TEXT_KEYS[j]; break; }
+    }
+    var spanSrc = null;
+    for (j = 0; j < SPAN_KEYS.length; j++) {
+      if (Array.isArray(raw[SPAN_KEYS[j]])) { spanSrc = raw[SPAN_KEYS[j]]; rec._spanKey = SPAN_KEYS[j]; break; }
+    }
+    if (spanSrc) {
+      for (j = 0; j < spanSrc.length; j++) {
+        var sp = coerceSpan(spanSrc[j]);
+        if (sp) rec.label.push(sp);
+      }
+    }
+    rec.id = raw.id !== undefined ? raw.id : (i + 1);
+    if (Array.isArray(raw.Comments)) rec.Comments = raw.Comments.slice();
+    else if (Array.isArray(raw.comments)) rec.Comments = raw.comments.slice();
+    else if (typeof raw.Comments === "string" && raw.Comments) rec.Comments = [raw.Comments];
+
+    for (k in raw) {
+      if (!Object.prototype.hasOwnProperty.call(raw, k)) continue;
+      if (k === "id" || k === rec._textKey || k === rec._spanKey || k === "Comments" || k === "comments") continue;
+      rec._extra[k] = raw[k];
+    }
+    return rec;
+  }
+
+  function parseJSONL(text) {
+    var out = [], lines = text.split(/\r?\n/), i, s;
+    for (i = 0; i < lines.length; i++) {
+      s = lines[i].trim();
+      if (!s) continue;
+      try {
+        out.push(JSON.parse(s));
+      } catch (err) {
+        throw new Error("Line " + (i + 1) + " is not valid JSON: " + err.message);
+      }
+    }
+    return out;
+  }
+
+  // Figures out JSON vs JSONL vs bundle on its own.
+  // Returns { records: [...], labels: [...] | null }.
+  function parseDataset(text) {
+    var trimmed = text.replace(/^﻿/, "").trim();
+    if (!trimmed) throw new Error("The file is empty.");
+    var raw = null, labels = null;
+    if (trimmed.charAt(0) === "[" || trimmed.charAt(0) === "{") {
+      var obj;
+      try {
+        obj = JSON.parse(trimmed);
+      } catch (err) {
+        // A file of concatenated objects is JSONL even though it starts with "{".
+        obj = null;
+        if (trimmed.charAt(0) !== "{") throw new Error("Not valid JSON: " + err.message);
+      }
+      if (obj === null) {
+        raw = parseJSONL(trimmed);
+      } else if (Array.isArray(obj)) {
+        raw = obj;
+      } else if (Array.isArray(obj.examples) || Array.isArray(obj.records) || Array.isArray(obj.data)) {
+        raw = obj.examples || obj.records || obj.data;
+        if (Array.isArray(obj.labels) && obj.labels.length) labels = obj.labels;
+      } else {
+        raw = [obj];
+      }
+    } else {
+      raw = parseJSONL(trimmed);
+    }
+    if (!Array.isArray(raw)) throw new Error("Unrecognized structure: expected an array of records.");
+    var records = raw.map(normalizeRecord);
+    return { records: records, labels: labels };
+  }
+
+  // Every distinct label name used anywhere in the data, in first-seen order.
+  function labelsUsed(records) {
+    var seen = {}, out = [], i, j;
+    for (i = 0; i < records.length; i++) {
+      for (j = 0; j < records[i].label.length; j++) {
+        var n = records[i].label[j][2];
+        if (!seen[n]) { seen[n] = 1; out.push(n); }
+      }
+    }
+    return out;
+  }
+
+  // Splits text at every span boundary, so overlapping spans render without
+  // losing or duplicating a single character.
+  function segmentText(text, spans) {
+    var n = text.length, i, k;
+    if (!n) return [];
+    var valid = [];
+    for (i = 0; i < spans.length; i++) {
+      var s = spans[i][0], e = spans[i][1];
+      if (typeof s !== "number" || typeof e !== "number") continue;
+      if (!(s >= 0 && e <= n && s < e)) continue;
+      valid.push({ i: i, s: s, e: e, label: spans[i][2] });
+    }
+    var pts = { 0: 1 }; pts[n] = 1;
+    for (i = 0; i < valid.length; i++) { pts[valid[i].s] = 1; pts[valid[i].e] = 1; }
+    var sorted = Object.keys(pts).map(Number).sort(function (a, b) { return a - b; });
+    var segs = [];
+    for (k = 0; k < sorted.length - 1; k++) {
+      var a = sorted[k], b = sorted[k + 1];
+      if (a >= b) continue;
+      var cover = [];
+      for (i = 0; i < valid.length; i++) if (valid[i].s <= a && valid[i].e >= b) cover.push(valid[i]);
+      // innermost (shortest) span wins the background color
+      cover.sort(function (x, y) { return (x.e - x.s) - (y.e - y.s); });
+      segs.push({ start: a, end: b, text: text.slice(a, b), cover: cover });
+    }
+    return segs;
+  }
+
+  // Drop leading/trailing whitespace from a selection; null if nothing is left.
+  function trimSpan(text, s, e) {
+    s = Math.max(0, Math.min(s, text.length));
+    e = Math.max(0, Math.min(e, text.length));
+    if (s > e) { var t = s; s = e; e = t; }
+    while (s < e && /\s/.test(text.charAt(s))) s++;
+    while (e > s && /\s/.test(text.charAt(e - 1))) e--;
+    return s < e ? { start: s, end: e } : null;
+  }
+
+  function spansOverlap(a, b) { return !(a[1] <= b[0] || a[0] >= b[1]); }
+
+  function sortSpans(spans) {
+    return spans.slice().sort(function (x, y) { return x[0] - y[0] || x[1] - y[1]; });
+  }
+
+  // ---------- serialization ----------
+  function toPlain(rec) {
+    var out = {}, k;
+    out.id = rec.id;
+    out[rec._textKey || "text"] = rec.text;
+    out.Comments = rec.Comments || [];
+    out[rec._spanKey || "label"] = sortSpans(rec.label);
+    for (k in rec._extra) if (Object.prototype.hasOwnProperty.call(rec._extra, k)) out[k] = rec._extra[k];
+    return out;
+  }
+
+  function toJSON(records) {
+    return JSON.stringify(records.map(toPlain), null, 2);
+  }
+
+  function toJSONL(records) {
+    return records.map(function (r) { return JSON.stringify(toPlain(r)); }).join("\n") + "\n";
+  }
+
+  function toBundle(records, labels) {
+    return JSON.stringify({
+      labels: labels,
+      count: records.length,
+      exported: new Date().toISOString(),
+      examples: records.map(toPlain)
+    }, null, 2);
+  }
+
+  function tokenize(text) {
+    var out = [], rx = /\S+/g, m;
+    while ((m = rx.exec(text)) !== null) out.push({ text: m[0], start: m.index, end: m.index + m[0].length });
+    return out;
+  }
+
+  // CoNLL-2003 style: "token TAG" per line, blank line between records.
+  function toCoNLL(records) {
+    var lines = [], i, j, k;
+    for (i = 0; i < records.length; i++) {
+      var rec = records[i];
+      var toks = tokenize(rec.text);
+      var tags = [];
+      for (j = 0; j < toks.length; j++) tags.push("O");
+      var spans = sortSpans(rec.label);
+      for (j = 0; j < spans.length; j++) {
+        var s = spans[j][0], e = spans[j][1], lab = spans[j][2], first = true;
+        for (k = 0; k < toks.length; k++) {
+          if (toks[k].end <= s || toks[k].start >= e) continue;
+          if (tags[k] !== "O") continue;           // first (innermost) span wins
+          tags[k] = (first ? "B-" : "I-") + lab;
+          first = false;
+        }
+      }
+      for (j = 0; j < toks.length; j++) lines.push(toks[j].text + " " + tags[j]);
+      lines.push("");
+    }
+    return lines.join("\n");
+  }
+
+  // ---------- validation ----------
+  function datasetIssues(records) {
+    var seenId = {}, dupIds = 0, badSpans = [], overlapping = 0, untrimmed = 0, dupTexts = 0, seenText = {};
+    var i, j, k;
+    for (i = 0; i < records.length; i++) {
+      var rec = records[i], id = String(rec.id);
+      if (seenId[id]) dupIds++; else seenId[id] = 1;
+      if (seenText[rec.text]) dupTexts++; else seenText[rec.text] = 1;
+      var n = rec.text.length, hasOv = false;
+      for (j = 0; j < rec.label.length; j++) {
+        var sp = rec.label[j], s = sp[0], e = sp[1];
+        if (!(s >= 0 && e <= n && s < e)) {
+          badSpans.push({ record: i, span: j, reason: s >= e ? "empty or reversed" : "outside the text" });
+          continue;
+        }
+        if (/^\s|\s$/.test(rec.text.slice(s, e))) untrimmed++;
+        for (k = j + 1; k < rec.label.length; k++) if (spansOverlap(sp, rec.label[k])) hasOv = true;
+      }
+      if (hasOv) overlapping++;
+    }
+    return {
+      total: records.length, dupIds: dupIds, dupTexts: dupTexts,
+      badSpans: badSpans, overlapping: overlapping, untrimmed: untrimmed
+    };
+  }
+
+  function stats(records) {
+    var labeled = 0, spans = 0, perLabel = {}, i, j;
+    for (i = 0; i < records.length; i++) {
+      if (records[i].label.length) labeled++;
+      spans += records[i].label.length;
+      for (j = 0; j < records[i].label.length; j++) {
+        var n = records[i].label[j][2];
+        perLabel[n] = (perLabel[n] || 0) + 1;
+      }
+    }
+    return { total: records.length, labeled: labeled, unlabeled: records.length - labeled, spans: spans, perLabel: perLabel };
+  }
+
+  return {
+    DEFAULT_LABELS: DEFAULT_LABELS, PALETTE: PALETTE, colorForName: colorForName,
+    coerceSpan: coerceSpan, normalizeRecord: normalizeRecord, parseJSONL: parseJSONL,
+    parseDataset: parseDataset, labelsUsed: labelsUsed, segmentText: segmentText,
+    trimSpan: trimSpan, spansOverlap: spansOverlap, sortSpans: sortSpans,
+    toPlain: toPlain, toJSON: toJSON, toJSONL: toJSONL, toBundle: toBundle,
+    tokenize: tokenize, toCoNLL: toCoNLL, datasetIssues: datasetIssues, stats: stats
+  };
+})();
+/* =====================================================================
+   core:end
+   ===================================================================== */
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------- state
+  var state = {
+    records: [],
+    view: [],              // record indices passing the current filter
+    pos: 0,                // cursor into view
+    labels: [],            // [{name,color,desc}]
+    fileName: null,
+    fileHandle: null,      // File System Access API handle, when available
+    dirty: false,
+    selectedEnt: null,
+    pending: null,         // {start,end} selection offsets
+    filter: { query: "", status: "all", label: "" },
+    undo: [], redo: [],
+    storage: null          // "idb" | "local" | null
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var els = {};
+  ["textbox", "selbar", "counter", "jump", "quickLabels", "sideLabels", "entList", "entCount",
+   "comments", "search", "labelFilter", "filterInfo", "stats", "labelStats", "health",
+   "progressBar", "fileChip", "fileName", "fileMeta", "dirtyDot", "toast", "banner",
+   "bannerText", "bannerActions", "labsBody", "newLabel", "brandSub", "saveExplain"]
+    .forEach(function (k) { els[k] = $(k); });
+
+  var CAN_FS = typeof window.showSaveFilePicker === "function";
+
+  // ---------------------------------------------------------------- utils
+  var toastTimer = null;
+  function toast(msg, kind) {
+    els.toast.textContent = msg;
+    els.toast.className = "show";
+    if (kind === "error") els.toast.style.background = "var(--danger)";
+    else els.toast.style.background = "";
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { els.toast.className = ""; }, 2600);
+  }
+
+  function escapeHTML(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function cur() { return state.records[state.view[state.pos]] || null; }
+
+  function markDirty() {
+    state.dirty = true;
+    els.dirtyDot.className = "dot dirty";
+    scheduleAutosave();
+  }
+
+  function download(filename, text, mime) {
+    var blob = new Blob([text], { type: mime || "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  // ------------------------------------------------------------- storage
+  // Working copies can be several MB, which is more than localStorage will
+  // hold, so prefer IndexedDB and fall back gracefully. Some browsers block
+  // both on file:// URLs; in that case autosave is simply off and we say so.
+  var idb = (function () {
+    var dbp = null;
+    function open() {
+      if (dbp) return dbp;
+      dbp = new Promise(function (resolve, reject) {
+        if (!window.indexedDB) return reject(new Error("no indexedDB"));
+        var req = indexedDB.open("ner-annotator", 1);
+        req.onupgradeneeded = function () { req.result.createObjectStore("kv"); };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error || new Error("indexedDB blocked")); };
+        req.onblocked = function () { reject(new Error("indexedDB blocked")); };
+      });
+      return dbp;
+    }
+    function tx(mode, fn) {
+      return open().then(function (db) {
+        return new Promise(function (resolve, reject) {
+          var t = db.transaction("kv", mode);
+          var req = fn(t.objectStore("kv"));
+          t.oncomplete = function () { resolve(req && req.result); };
+          t.onerror = function () { reject(t.error); };
+        });
+      });
+    }
+    return {
+      get: function (k) { return tx("readonly", function (s) { return s.get(k); }); },
+      set: function (k, v) { return tx("readwrite", function (s) { return s.put(v, k); }); },
+      del: function (k) { return tx("readwrite", function (s) { return s.delete(k); }); }
+    };
+  })();
+
+  function lsGet(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }
+
+  var autosaveTimer = null;
+  function scheduleAutosave() {
+    if (state.storage === null) return;
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(saveSession, 900);
+  }
+
+  function sessionPayload() {
+    return {
+      savedAt: Date.now(),
+      fileName: state.fileName,
+      records: state.records.map(NER.toPlain),
+      spanKeys: state.records.map(function (r) { return r._spanKey; }),
+      pos: state.pos
+    };
+  }
+
+  function saveSession() {
+    if (!state.records.length) return;
+    var payload = sessionPayload();
+    if (state.storage === "idb") {
+      idb.set("session", payload).catch(function () {
+        state.storage = lsSet("ner-session", payload) ? "local" : null;
+        if (!state.storage) showAutosaveOff();
+      });
+    } else if (state.storage === "local") {
+      if (!lsSet("ner-session", payload)) { state.storage = null; showAutosaveOff(); }
+    }
+  }
+
+  function showAutosaveOff() {
+    banner("Autosave is unavailable in this browser context, so your work lives only in this tab. Export or save before closing it.", []);
+  }
+
+  function loadSession() {
+    return idb.get("session")
+      .then(function (v) { state.storage = "idb"; return v || lsGet("ner-session"); })
+      .catch(function () {
+        var probe = lsSet("ner-probe", 1);
+        state.storage = probe ? "local" : null;
+        try { localStorage.removeItem("ner-probe"); } catch (e) {}
+        return probe ? lsGet("ner-session") : null;
+      });
+  }
+
+  function clearSession() {
+    if (state.storage === "idb") idb.del("session").catch(function () {});
+    try { localStorage.removeItem("ner-session"); } catch (e) {}
+  }
+
+  function banner(text, actions) {
+    els.bannerText.textContent = text;
+    els.bannerActions.innerHTML = "";
+    (actions || []).forEach(function (a) {
+      var b = document.createElement("button");
+      b.className = "btn sm" + (a.primary ? " primary" : "");
+      b.textContent = a.label;
+      b.onclick = a.onClick;
+      els.bannerActions.appendChild(b);
+      els.bannerActions.appendChild(document.createTextNode(" "));
+    });
+    els.banner.hidden = false;
+  }
+  function hideBanner() { els.banner.hidden = true; }
+
+  // -------------------------------------------------------------- labels
+  function labelDef(name) {
+    for (var i = 0; i < state.labels.length; i++) if (state.labels[i].name === name) return state.labels[i];
+    return null;
+  }
+  function colorOf(name) {
+    var d = labelDef(name);
+    return d ? d.color : NER.colorForName(name);
+  }
+  function saveLabels() { lsSet("ner-labels", state.labels); }
+
+  function loadLabels() {
+    var saved = lsGet("ner-labels");
+    state.labels = (Array.isArray(saved) && saved.length)
+      ? saved.filter(function (l) { return l && l.name; })
+      : NER.DEFAULT_LABELS.map(function (l) { return { name: l.name, color: l.color, desc: l.desc }; });
+  }
+
+  function addLabel(name, color, desc) {
+    name = String(name || "").trim();
+    if (!name) return false;
+    if (labelDef(name)) { toast("“" + name + "” is already in the scheme."); return false; }
+    state.labels.push({
+      name: name,
+      color: color || NER.PALETTE[state.labels.length % NER.PALETTE.length],
+      desc: desc || ""
+    });
+    saveLabels();
+    renderLabels(); renderLabelFilter(); renderStats();
+    return true;
+  }
+
+  // Pull in any label found in the data that the scheme does not know about.
+  function adoptLabelsFromData() {
+    var used = NER.labelsUsed(state.records), added = 0;
+    used.forEach(function (n) {
+      if (!labelDef(n)) {
+        state.labels.push({ name: n, color: NER.PALETTE[(state.labels.length + added) % NER.PALETTE.length], desc: "" });
+        added++;
+      }
+    });
+    if (added) saveLabels();
+    return added;
+  }
+
+  function countSpansWithLabel(name) {
+    var c = 0, i, j;
+    for (i = 0; i < state.records.length; i++)
+      for (j = 0; j < state.records[i].label.length; j++)
+        if (state.records[i].label[j][2] === name) c++;
+    return c;
+  }
+
+  function renameLabelEverywhere(oldName, newName) {
+    var i, j, c = 0;
+    for (i = 0; i < state.records.length; i++)
+      for (j = 0; j < state.records[i].label.length; j++)
+        if (state.records[i].label[j][2] === oldName) { state.records[i].label[j][2] = newName; c++; }
+    if (c) markDirty();
+    return c;
+  }
+
+  function removeLabelSpans(name) {
+    var i, c = 0;
+    for (i = 0; i < state.records.length; i++) {
+      var before = state.records[i].label.length;
+      state.records[i].label = state.records[i].label.filter(function (sp) { return sp[2] !== name; });
+      c += before - state.records[i].label.length;
+    }
+    if (c) markDirty();
+    return c;
+  }
+
+  // ---------------------------------------------------------- undo / redo
+  function snapshot() {
+    var i = state.view[state.pos];
+    if (i === undefined) return;
+    state.undo.push({ i: i, label: JSON.parse(JSON.stringify(state.records[i].label)), comments: (state.records[i].Comments || []).slice() });
+    if (state.undo.length > 200) state.undo.shift();
+    state.redo.length = 0;
+  }
+
+  function applyRestore(stack, other) {
+    var entry = stack.pop();
+    if (!entry) { toast("Nothing to " + (stack === state.undo ? "undo" : "redo") + "."); return; }
+    var rec = state.records[entry.i];
+    other.push({ i: entry.i, label: JSON.parse(JSON.stringify(rec.label)), comments: (rec.Comments || []).slice() });
+    rec.label = entry.label;
+    rec.Comments = entry.comments;
+    markDirty();
+    var vp = state.view.indexOf(entry.i);
+    if (vp >= 0) state.pos = vp; else { computeView(); state.pos = Math.max(0, state.view.indexOf(entry.i)); }
+    state.selectedEnt = null;
+    renderAll();
+  }
+
+  // ------------------------------------------------------------ the text
+  // Character offset of (node, offset) within container. Range.toString()
+  // never includes ::after chips, so the arithmetic stays exact.
+  function absOffset(container, node, offset) {
+    var r = document.createRange();
+    r.selectNodeContents(container);
+    try { r.setEnd(node, offset); } catch (e) { return null; }
+    return r.toString().length;
+  }
+
+  function selectionOffsets(container) {
+    var sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+    var r = sel.getRangeAt(0);
+    if (!container.contains(r.startContainer) || !container.contains(r.endContainer)) return null;
+    var a = absOffset(container, r.startContainer, r.startOffset);
+    var b = absOffset(container, r.endContainer, r.endOffset);
+    if (a === null || b === null || a === b) return null;
+    return { start: Math.min(a, b), end: Math.max(a, b) };
+  }
+
+  function renderText() {
+    var rec = cur();
+    els.textbox.textContent = "";
+    if (!rec) {
+      var msg = document.createElement("span");
+      msg.className = "empty";
+      msg.textContent = state.records.length
+        ? "No record matches the current filter."
+        : "Open a JSON or JSONL file to begin.";
+      els.textbox.appendChild(msg);
+      return;
+    }
+    var segs = NER.segmentText(rec.text, rec.label);
+    if (!segs.length) { els.textbox.appendChild(document.createTextNode(rec.text)); return; }
+    segs.forEach(function (seg) {
+      if (!seg.cover.length) { els.textbox.appendChild(document.createTextNode(seg.text)); return; }
+      var top = seg.cover[0];
+      var span = document.createElement("span");
+      span.className = "ent" + (seg.cover.length > 1 ? " ent-overlap" : "") +
+        (seg.start === top.s ? " ent-start" : "") + (seg.end === top.e ? " ent-end" : "") +
+        (state.selectedEnt === top.i ? " is-selected" : "");
+      span.style.setProperty("--ent-color", colorOf(top.label));
+      span.dataset.ent = top.i;
+      if (seg.end === top.e) span.dataset.chip = top.label;
+      span.title = seg.cover.map(function (c) {
+        return c.label + "  [" + c.s + ", " + c.e + ")";
+      }).join("\n") + (seg.cover.length > 1 ? "\n(overlapping spans)" : "");
+      span.textContent = seg.text;
+      els.textbox.appendChild(span);
+    });
+  }
+
+  function renderSelbar() {
+    var rec = cur();
+    els.selbar.innerHTML = "";
+    if (!rec) return;
+    if (state.pending) {
+      var t = rec.text.slice(state.pending.start, state.pending.end);
+      els.selbar.innerHTML = 'Selected <code>[' + state.pending.start + ", " + state.pending.end +
+        ')</code> <span class="quote">“' + escapeHTML(t) + '”</span> — pick a label below.';
+    } else if (state.selectedEnt !== null && rec.label[state.selectedEnt]) {
+      var sp = rec.label[state.selectedEnt];
+      els.selbar.innerHTML = 'Span selected: <span class="quote">“' + escapeHTML(rec.text.slice(sp[0], sp[1])) +
+        '”</span> <code>' + escapeHTML(sp[2]) + '</code> — press a label key to re-tag, <code>Delete</code> to remove.';
+    } else {
+      els.selbar.innerHTML = '<span class="muted">Select text above, then click a label or press its number key.</span>';
+    }
+  }
+
+  function renderEntList() {
+    var rec = cur();
+    els.entList.innerHTML = "";
+    els.entCount.textContent = rec && rec.label.length ? "(" + rec.label.length + ")" : "";
+    if (!rec || !rec.label.length) {
+      els.entList.innerHTML = '<div class="muted small">Nothing tagged yet. Select text above, then click a label or press its number key.</div>';
+      return;
+    }
+    rec.label.forEach(function (sp, i) {
+      var box = document.createElement("div");
+      box.className = "ent-item" + (state.selectedEnt === i ? " is-selected" : "");
+      box.style.setProperty("--ent-color", colorOf(sp[2]));
+      box.onclick = function (e) {
+        if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "BUTTON") return;
+        state.selectedEnt = i; state.pending = null; renderText(); renderEntList(); renderSelbar();
+      };
+
+      var top = document.createElement("div");
+      top.className = "top";
+      var sw = document.createElement("span"); sw.className = "swatch"; top.appendChild(sw);
+
+      var sel = document.createElement("select");
+      var names = state.labels.map(function (l) { return l.name; });
+      if (names.indexOf(sp[2]) < 0) names.push(sp[2]);
+      names.forEach(function (n) {
+        var o = document.createElement("option");
+        o.value = n; o.textContent = n; if (n === sp[2]) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.onchange = function () { snapshot(); sp[2] = sel.value; markDirty(); renderAll(); };
+      top.appendChild(sel);
+
+      var off = document.createElement("span");
+      off.className = "off"; off.textContent = "[" + sp[0] + ", " + sp[1] + ")";
+      top.appendChild(off);
+
+      var sp1 = document.createElement("span"); sp1.style.flex = "1"; top.appendChild(sp1);
+
+      var del = document.createElement("button");
+      del.className = "btn sm"; del.textContent = "Delete";
+      del.onclick = function () { removeEntity(i); };
+      top.appendChild(del);
+      box.appendChild(top);
+
+      var txt = document.createElement("div");
+      txt.className = "txt"; txt.textContent = "“" + rec.text.slice(sp[0], sp[1]) + "”";
+      box.appendChild(txt);
+
+      var adj = document.createElement("div");
+      adj.className = "row small muted"; adj.style.marginTop = "5px";
+      [["start", 0], ["end", 1]].forEach(function (pair) {
+        var lab = document.createElement("label"); lab.textContent = pair[0];
+        var inp = document.createElement("input");
+        inp.type = "number"; inp.value = sp[pair[1]]; inp.min = 0; inp.max = rec.text.length;
+        inp.onchange = function () {
+          var v = parseInt(inp.value, 10);
+          if (isNaN(v)) { inp.value = sp[pair[1]]; return; }
+          v = Math.max(0, Math.min(v, rec.text.length));
+          var ns = pair[1] === 0 ? v : sp[0], ne = pair[1] === 1 ? v : sp[1];
+          if (ns >= ne) { toast("Start must be before end.", "error"); inp.value = sp[pair[1]]; return; }
+          snapshot(); sp[0] = ns; sp[1] = ne; markDirty(); renderAll();
+        };
+        adj.appendChild(lab); adj.appendChild(inp);
+      });
+      box.appendChild(adj);
+      els.entList.appendChild(box);
+    });
+  }
+
+  function renderLabels() {
+    [els.quickLabels, els.sideLabels].forEach(function (host, hostIdx) {
+      host.innerHTML = "";
+      state.labels.forEach(function (l, i) {
+        var b = document.createElement("button");
+        b.className = "lab";
+        b.style.setProperty("--lab-color", l.color);
+        b.textContent = l.name;
+        b.title = l.desc || l.name;
+        if (i < 9) {
+          var k = document.createElement("kbd"); k.textContent = String(i + 1);
+          b.appendChild(k);
+        }
+        b.onclick = function () { applyLabel(l.name); };
+        host.appendChild(b);
+      });
+      if (!state.labels.length && hostIdx === 1) {
+        host.innerHTML = '<span class="muted small">No labels yet — add one below.</span>';
+      }
+    });
+  }
+
+  function renderLabelFilter() {
+    var v = els.labelFilter.value;
+    els.labelFilter.innerHTML = '<option value="">Any label</option>';
+    state.labels.forEach(function (l) {
+      var o = document.createElement("option");
+      o.value = l.name; o.textContent = l.name;
+      els.labelFilter.appendChild(o);
+    });
+    els.labelFilter.value = v;
+  }
+
+  function renderStats() {
+    if (!state.records.length) { els.stats.innerHTML = '<div class="muted small">No data loaded.</div>'; els.labelStats.innerHTML = ""; return; }
+    var s = NER.stats(state.records);
+    els.stats.innerHTML =
+      row("Records", s.total) + row("Labeled", s.labeled + " (" + Math.round(100 * s.labeled / s.total) + "%)") +
+      row("Unlabeled", s.unlabeled) + row("Spans", s.spans);
+    var max = 1, k;
+    for (k in s.perLabel) if (s.perLabel[k] > max) max = s.perLabel[k];
+    var names = Object.keys(s.perLabel).sort(function (a, b) { return s.perLabel[b] - s.perLabel[a]; });
+    els.labelStats.innerHTML = names.map(function (n) {
+      return '<div class="stat"><span>' + escapeHTML(n) + "</span><span>" + s.perLabel[n] + "</span></div>" +
+        '<div class="bar" style="--lab-color:' + colorOf(n) + ";width:" + Math.max(3, 100 * s.perLabel[n] / max) + '%"></div>';
+    }).join("");
+    els.progressBar.style.width = (100 * s.labeled / s.total) + "%";
+  }
+  function row(k, v) { return '<div class="stat"><span class="muted">' + k + "</span><span>" + v + "</span></div>"; }
+
+  function renderHealth() {
+    if (!state.records.length) { els.health.innerHTML = "Load a file to check."; return; }
+    var h = NER.datasetIssues(state.records);
+    var items = [];
+    if (h.dupIds) items.push(h.dupIds + " records reuse an id already seen — ids are not unique.");
+    if (h.dupTexts) items.push(h.dupTexts + " records duplicate the text of another record.");
+    if (h.badSpans.length) items.push(h.badSpans.length + " spans fall outside their text or are empty.");
+    if (h.untrimmed) items.push(h.untrimmed + " spans start or end on whitespace.");
+    if (h.overlapping) items.push(h.overlapping + " records contain overlapping spans.");
+    if (!items.length) { els.health.innerHTML = '<span style="color:var(--ok)">No problems found.</span>'; return; }
+    els.health.innerHTML = '<div class="warnbox">' + items.map(escapeHTML).join("<br>") + "</div>";
+    var tools = document.createElement("div");
+    tools.className = "row"; tools.style.marginTop = "8px";
+    if (h.dupIds) tools.appendChild(mkBtn("Renumber ids 1…N", function () {
+      state.records.forEach(function (r, i) { r.id = i + 1; });
+      markDirty(); renderHealth(); renderCounter(); toast("Ids renumbered.");
+    }));
+    if (h.untrimmed) tools.appendChild(mkBtn("Trim whitespace in spans", function () {
+      var c = 0;
+      state.records.forEach(function (r) {
+        r.label = r.label.map(function (sp) {
+          var t = NER.trimSpan(r.text, sp[0], sp[1]);
+          if (!t) return sp;
+          if (t.start !== sp[0] || t.end !== sp[1]) c++;
+          return [t.start, t.end, sp[2]];
+        });
+      });
+      markDirty(); renderAll(); toast(c + " spans trimmed.");
+    }));
+    if (h.badSpans.length) tools.appendChild(mkBtn("Drop invalid spans", function () {
+      if (!confirm("Remove " + h.badSpans.length + " spans that fall outside their text? This cannot be undone.")) return;
+      state.records.forEach(function (r) {
+        r.label = r.label.filter(function (sp) { return sp[0] >= 0 && sp[1] <= r.text.length && sp[0] < sp[1]; });
+      });
+      markDirty(); renderAll(); toast("Invalid spans removed.");
+    }));
+    els.health.appendChild(tools);
+  }
+  function mkBtn(label, fn) {
+    var b = document.createElement("button");
+    b.className = "btn sm"; b.textContent = label; b.onclick = fn;
+    return b;
+  }
+
+  function renderCounter() {
+    var rec = cur();
+    var absIdx = state.view[state.pos];
+    if (!state.records.length) { els.counter.textContent = "No data loaded"; return; }
+    var txt = "Record <b>" + (absIdx === undefined ? "–" : absIdx + 1) + "</b> of " + state.records.length;
+    if (state.view.length !== state.records.length) {
+      txt += " &nbsp;·&nbsp; <b>" + (state.view.length ? state.pos + 1 : 0) + "</b> of " + state.view.length + " in view";
+    }
+    if (rec) txt += ' &nbsp;·&nbsp; <span class="muted">id ' + escapeHTML(String(rec.id)) + "</span>";
+    els.counter.innerHTML = txt;
+    els.jump.max = state.records.length;
+    $("btnPrev").disabled = state.pos <= 0;
+    $("btnNext").disabled = state.pos >= state.view.length - 1;
+  }
+
+  function renderComments() {
+    var rec = cur();
+    els.comments.value = rec ? (rec.Comments || []).join("\n") : "";
+    els.comments.disabled = !rec;
+  }
+
+  function renderFilterInfo() {
+    var f = state.filter;
+    var active = f.query || f.status !== "all" || f.label;
+    els.filterInfo.textContent = active
+      ? state.view.length + " of " + state.records.length + " records match."
+      : "";
+  }
+
+  function renderAll() {
+    renderText(); renderSelbar(); renderEntList(); renderCounter();
+    renderComments(); renderStats(); renderHealth(); renderFilterInfo();
+  }
+
+  // ------------------------------------------------------------ mutation
+  function applyLabel(name) {
+    var rec = cur();
+    if (!rec) return;
+    if (state.pending) {
+      var t = NER.trimSpan(rec.text, state.pending.start, state.pending.end);
+      if (!t) { toast("That selection is only whitespace.", "error"); return; }
+      var dup = rec.label.some(function (sp) { return sp[0] === t.start && sp[1] === t.end && sp[2] === name; });
+      if (dup) { toast("That span is already tagged " + name + "."); return; }
+      snapshot();
+      rec.label.push([t.start, t.end, name]);
+      rec.label = NER.sortSpans(rec.label);
+      state.selectedEnt = rec.label.findIndex(function (sp) { return sp[0] === t.start && sp[1] === t.end && sp[2] === name; });
+      state.pending = null;
+      window.getSelection().removeAllRanges();
+      markDirty(); renderAll();
+    } else if (state.selectedEnt !== null && rec.label[state.selectedEnt]) {
+      snapshot();
+      rec.label[state.selectedEnt][2] = name;
+      markDirty(); renderAll();
+    } else {
+      toast("Select some text first, then choose a label.");
+    }
+  }
+
+  function removeEntity(i) {
+    var rec = cur();
+    if (!rec || !rec.label[i]) return;
+    snapshot();
+    rec.label.splice(i, 1);
+    state.selectedEnt = null;
+    markDirty(); renderAll();
+  }
+
+  // -------------------------------------------------------- view / navigate
+  function computeView() {
+    var f = state.filter, q = f.query.trim().toLowerCase();
+    var keepIdx = state.view[state.pos];
+    state.view = [];
+    state.records.forEach(function (r, i) {
+      if (f.status === "labeled" && !r.label.length) return;
+      if (f.status === "unlabeled" && r.label.length) return;
+      if (f.status === "noted" && !(r.Comments && r.Comments.length)) return;
+      if (f.label && !r.label.some(function (sp) { return sp[2] === f.label; })) return;
+      if (q && r.text.toLowerCase().indexOf(q) < 0) return;
+      state.view.push(i);
+    });
+    var np = state.view.indexOf(keepIdx);
+    state.pos = np >= 0 ? np : 0;
+    if (state.pos >= state.view.length) state.pos = Math.max(0, state.view.length - 1);
+  }
+
+  function go(delta) {
+    var np = state.pos + delta;
+    if (np < 0 || np >= state.view.length) return;
+    state.pos = np; state.selectedEnt = null; state.pending = null;
+    renderAll();
+    scheduleAutosave();
+  }
+
+  function goToAbsolute(absIdx) {
+    if (absIdx < 0 || absIdx >= state.records.length) { toast("Out of range.", "error"); return; }
+    var vp = state.view.indexOf(absIdx);
+    if (vp < 0) {
+      state.filter = { query: "", status: "all", label: "" };
+      els.search.value = ""; els.labelFilter.value = "";
+      setStatusChip("all");
+      computeView();
+      vp = state.view.indexOf(absIdx);
+      toast("Filters cleared to reach that record.");
+    }
+    state.pos = vp; state.selectedEnt = null; state.pending = null;
+    renderAll();
+  }
+
+  function nextUnlabeled() {
+    for (var k = state.pos + 1; k < state.view.length; k++) {
+      if (!state.records[state.view[k]].label.length) { state.pos = k; state.selectedEnt = null; state.pending = null; renderAll(); return; }
+    }
+    toast("No unlabeled record after this one.");
+  }
+
+  function setStatusChip(status) {
+    Array.prototype.forEach.call(document.querySelectorAll("#statusChips .chip"), function (c) {
+      c.className = "chip" + (c.dataset.status === status ? " on" : "");
+    });
+  }
+
+  // ------------------------------------------------------------ load/save
+  function adoptDataset(parsed, fileName, handle) {
+    state.records = parsed.records;
+    state.fileName = fileName || "dataset.json";
+    state.fileHandle = handle || null;
+    state.pos = 0; state.selectedEnt = null; state.pending = null;
+    state.undo.length = 0; state.redo.length = 0;
+    if (parsed.labels) {
+      parsed.labels.forEach(function (l) {
+        if (typeof l === "string") { if (!labelDef(l)) state.labels.push({ name: l, color: NER.PALETTE[state.labels.length % NER.PALETTE.length], desc: "" }); }
+        else if (l && l.name && !labelDef(l.name)) state.labels.push(l);
+      });
+      saveLabels();
+    }
+    var added = adoptLabelsFromData();
+    state.filter = { query: "", status: "all", label: "" };
+    els.search.value = ""; els.labelFilter.value = ""; setStatusChip("all");
+    state.view = [];        // so computeView does not try to hold a position from the previous file
+    computeView();
+    renderLabels(); renderLabelFilter(); renderAll();
+    els.fileChip.hidden = false;
+    els.fileName.textContent = state.fileName;
+    els.fileMeta.textContent = "· " + state.records.length + " records";
+    state.dirty = false;
+    els.dirtyDot.className = "dot";
+    hideBanner();
+    toast("Loaded " + state.records.length + " records" + (added ? " (+" + added + " labels from the data)" : "") + ".");
+    saveSession();
+  }
+
+  function readFile(file, handle) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        adoptDataset(NER.parseDataset(String(reader.result)), file.name, handle);
+      } catch (err) {
+        toast("Could not read that file: " + err.message, "error");
+        banner("Could not read " + file.name + ": " + err.message, [{ label: "Dismiss", onClick: hideBanner }]);
+      }
+    };
+    reader.onerror = function () { toast("The browser could not read that file.", "error"); };
+    reader.readAsText(file, "utf-8");
+  }
+
+  function openData() {
+    if (CAN_FS && window.showOpenFilePicker) {
+      window.showOpenFilePicker({
+        types: [{ description: "Annotation data", accept: { "application/json": [".json", ".jsonl", ".txt"] } }],
+        multiple: false
+      }).then(function (handles) {
+        var handle = handles[0];
+        return handle.getFile().then(function (f) { readFile(f, handle); });
+      }).catch(function (err) {
+        if (err && err.name === "AbortError") return;
+        $("filePicker").click();   // fall back to the classic picker
+      });
+    } else {
+      $("filePicker").click();
+    }
+  }
+
+  function save() {
+    if (!state.records.length) { toast("Nothing to save."); return; }
+    var text = NER.toJSON(state.records);
+    if (state.fileHandle && state.fileHandle.createWritable) {
+      state.fileHandle.createWritable()
+        .then(function (w) { return w.write(text).then(function () { return w.close(); }); })
+        .then(function () {
+          state.dirty = false; els.dirtyDot.className = "dot";
+          toast("Saved to " + state.fileName + ".");
+          clearSession();
+        })
+        .catch(function (err) { toast("Could not write the file: " + err.message, "error"); });
+      return;
+    }
+    if (CAN_FS) {
+      window.showSaveFilePicker({
+        suggestedName: state.fileName || "annotations.json",
+        types: [{ description: "JSON", accept: { "application/json": [".json"] } }]
+      }).then(function (handle) {
+        state.fileHandle = handle;
+        state.fileName = handle.name;
+        els.fileName.textContent = handle.name;
+        save();
+      }).catch(function (err) { if (!err || err.name !== "AbortError") toast("Save cancelled.", "error"); });
+      return;
+    }
+    download(state.fileName || "annotations.json", text);
+    state.dirty = false; els.dirtyDot.className = "dot";
+    toast("Downloaded — autosave still holds your work in this browser.");
+  }
+
+  function doExport(kind) {
+    if (!state.records.length && kind !== "scheme") { toast("Nothing to export."); return; }
+    var base = (state.fileName || "annotations").replace(/\.(jsonl?|txt)$/i, "");
+    if (kind === "json") download(base + ".annotated.json", NER.toJSON(state.records));
+    else if (kind === "jsonl") download(base + ".annotated.jsonl", NER.toJSONL(state.records));
+    else if (kind === "bundle") download(base + ".bundle.json", NER.toBundle(state.records, state.labels));
+    else if (kind === "conll") download(base + ".conll.txt", NER.toCoNLL(state.records), "text/plain");
+    else if (kind === "scheme") download("label_scheme.json", JSON.stringify({ labels: state.labels }, null, 2));
+    toast("Exported.");
+  }
+
+  // ------------------------------------------------------- label manager
+  function renderLabsTable() {
+    els.labsBody.innerHTML = "";
+    state.labels.forEach(function (l, i) {
+      var tr = document.createElement("tr");
+
+      var tdC = document.createElement("td");
+      var color = document.createElement("input");
+      color.type = "color"; color.value = l.color;
+      color.oninput = function () { l.color = color.value; saveLabels(); renderLabels(); renderText(); renderEntList(); renderStats(); };
+      tdC.appendChild(color); tr.appendChild(tdC);
+
+      var tdN = document.createElement("td");
+      var name = document.createElement("input");
+      name.type = "text"; name.value = l.name;
+      name.onchange = function () {
+        var v = name.value.trim();
+        if (!v) { name.value = l.name; return; }
+        if (v !== l.name && labelDef(v)) { toast("“" + v + "” already exists.", "error"); name.value = l.name; return; }
+        var n = countSpansWithLabel(l.name);
+        if (n && !confirm("Rename “" + l.name + "” to “" + v + "” in the scheme and on " + n + " existing spans?")) { name.value = l.name; return; }
+        if (n) renameLabelEverywhere(l.name, v);
+        l.name = v; saveLabels();
+        renderLabels(); renderLabelFilter(); renderAll(); renderLabsTable();
+      };
+      tdN.appendChild(name); tr.appendChild(tdN);
+
+      var tdD = document.createElement("td");
+      var desc = document.createElement("input");
+      desc.type = "text"; desc.value = l.desc || ""; desc.placeholder = "what counts as this label";
+      desc.onchange = function () { l.desc = desc.value; saveLabels(); renderLabels(); };
+      tdD.appendChild(desc); tr.appendChild(tdD);
+
+      var tdU = document.createElement("td");
+      tdU.className = "small muted";
+      tdU.textContent = state.records.length ? countSpansWithLabel(l.name) : "–";
+      tr.appendChild(tdU);
+
+      var tdX = document.createElement("td");
+      var del = document.createElement("button");
+      del.className = "btn sm ghost"; del.textContent = "✕"; del.title = "Remove from scheme";
+      del.onclick = function () {
+        var n = countSpansWithLabel(l.name);
+        if (n) {
+          var also = confirm(n + " spans use “" + l.name + "”.\n\nOK — delete the label and those spans.\nCancel — keep the spans and only remove it from the palette.");
+          if (also) removeLabelSpans(l.name);
+        }
+        state.labels.splice(i, 1);
+        saveLabels();
+        renderLabels(); renderLabelFilter(); renderAll(); renderLabsTable();
+      };
+      tdX.appendChild(del); tr.appendChild(tdX);
+
+      els.labsBody.appendChild(tr);
+    });
+  }
+
+  // ------------------------------------------------------------ wiring up
+  function isTyping(e) {
+    var t = e.target;
+    return t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+  }
+
+  function init() {
+    loadLabels();
+    renderLabels(); renderLabelFilter(); renderAll();
+
+    els.brandSub.textContent = CAN_FS ? "· saves straight back to your file" : "· exports to your downloads folder";
+    els.saveExplain.textContent = CAN_FS
+      ? "Save writes straight back to the file you opened. Your work is also autosaved in this browser after every change, so a crash or an accidental tab close costs nothing."
+      : "This browser cannot write files in place, so Save downloads a copy. Your work is autosaved in this browser after every change; Chrome or Edge over http:// or https:// can save back to the original file instead.";
+
+    // file pickers
+    $("btnOpen").onclick = openData;
+    $("filePicker").onchange = function (e) { if (e.target.files[0]) readFile(e.target.files[0], null); e.target.value = ""; };
+    $("btnSave").onclick = save;
+
+    // export menu
+    var menu = $("exportMenu");
+    $("btnExport").onclick = function (e) { e.stopPropagation(); menu.hidden = !menu.hidden; };
+    document.addEventListener("click", function () { menu.hidden = true; });
+    menu.onclick = function (e) {
+      var b = e.target.closest("button[data-export]");
+      if (b) { doExport(b.dataset.export); menu.hidden = true; }
+    };
+
+    // navigation
+    $("btnPrev").onclick = function () { go(-1); };
+    $("btnNext").onclick = function () { go(1); };
+    $("btnNextUnlabeled").onclick = nextUnlabeled;
+    els.jump.onchange = function () {
+      var v = parseInt(els.jump.value, 10);
+      if (!isNaN(v)) goToAbsolute(v - 1);
+      els.jump.value = "";
+    };
+
+    // selection in the text box
+    els.textbox.addEventListener("mouseup", function () {
+      setTimeout(function () {
+        var off = selectionOffsets(els.textbox);
+        state.pending = off;
+        if (off) state.selectedEnt = null;
+        renderSelbar();
+      }, 0);
+    });
+    els.textbox.addEventListener("click", function (e) {
+      var span = e.target.closest ? e.target.closest(".ent") : null;
+      if (!span) return;
+      setTimeout(function () {
+        if (state.pending) return;            // a drag-select wins over a click
+        state.selectedEnt = parseInt(span.dataset.ent, 10);
+        renderText(); renderEntList(); renderSelbar();
+      }, 0);
+    });
+
+    // comments
+    els.comments.onchange = function () {
+      var rec = cur();
+      if (!rec) return;
+      snapshot();
+      var lines = els.comments.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
+      rec.Comments = lines;
+      markDirty(); computeView(); renderCounter(); renderFilterInfo();
+    };
+
+    // labels
+    $("btnAddLabel").onclick = function () {
+      if (addLabel(els.newLabel.value)) els.newLabel.value = "";
+    };
+    els.newLabel.onkeydown = function (e) {
+      if (e.key === "Enter") { if (addLabel(els.newLabel.value)) els.newLabel.value = ""; }
+    };
+
+    // label manager
+    $("btnManage").onclick = function () { renderLabsTable(); $("manageModal").hidden = false; };
+    $("btnLabClose").onclick = function () { $("manageModal").hidden = true; };
+    $("btnLabAdd").onclick = function () {
+      var n = prompt("New label name (e.g. ROAD, WATERBODY, ADDRESS):");
+      if (n && addLabel(n)) renderLabsTable();
+    };
+    $("btnLabDefaults").onclick = function () {
+      if (!confirm("Replace the palette with the eight default labels? Existing spans keep their labels.")) return;
+      state.labels = NER.DEFAULT_LABELS.map(function (l) { return { name: l.name, color: l.color, desc: l.desc }; });
+      adoptLabelsFromData(); saveLabels();
+      renderLabels(); renderLabelFilter(); renderAll(); renderLabsTable();
+    };
+    $("btnLabExport").onclick = function () { doExport("scheme"); };
+    $("btnLabImport").onclick = function () { $("schemePicker").click(); };
+    $("schemePicker").onchange = function (e) {
+      var f = e.target.files[0];
+      if (!f) return;
+      var r = new FileReader();
+      r.onload = function () {
+        try {
+          var obj = JSON.parse(String(r.result));
+          var list = Array.isArray(obj) ? obj : obj.labels;
+          if (!Array.isArray(list)) throw new Error("expected a labels array");
+          state.labels = list.map(function (l, i) {
+            return typeof l === "string"
+              ? { name: l, color: NER.PALETTE[i % NER.PALETTE.length], desc: "" }
+              : { name: String(l.name), color: l.color || NER.PALETTE[i % NER.PALETTE.length], desc: l.desc || "" };
+          }).filter(function (l) { return l.name; });
+          adoptLabelsFromData(); saveLabels();
+          renderLabels(); renderLabelFilter(); renderAll(); renderLabsTable();
+          toast("Imported " + state.labels.length + " labels.");
+        } catch (err) {
+          toast("Not a label scheme: " + err.message, "error");
+        }
+      };
+      r.readAsText(f, "utf-8");
+      e.target.value = "";
+    };
+
+    // filters
+    var searchTimer = null;
+    els.search.oninput = function () {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(function () {
+        state.filter.query = els.search.value;
+        computeView(); renderAll();
+      }, 200);
+    };
+    document.querySelectorAll("#statusChips .chip").forEach(function (c) {
+      c.onclick = function () {
+        state.filter.status = c.dataset.status;
+        setStatusChip(c.dataset.status);
+        computeView(); renderAll();
+      };
+    });
+    els.labelFilter.onchange = function () {
+      state.filter.label = els.labelFilter.value;
+      computeView(); renderAll();
+    };
+
+    // theme
+    $("btnTheme").onclick = function () {
+      var cur = document.documentElement.getAttribute("data-theme");
+      var next = cur === "dark" ? "light" : (cur === "light" ? "dark" : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "light" : "dark"));
+      document.documentElement.setAttribute("data-theme", next);
+      lsSet("ner-theme", next);
+    };
+    var savedTheme = lsGet("ner-theme");
+    if (savedTheme) document.documentElement.setAttribute("data-theme", savedTheme);
+
+    // help
+    $("btnHelp").onclick = function () { $("helpModal").hidden = false; };
+    $("btnHelpClose").onclick = function () { $("helpModal").hidden = true; };
+    document.querySelectorAll(".modal-bg").forEach(function (m) {
+      m.onclick = function (e) { if (e.target === m) m.hidden = true; };
+    });
+
+    // keyboard
+    document.addEventListener("keydown", function (e) {
+      var meta = e.ctrlKey || e.metaKey;
+      if (meta && e.key.toLowerCase() === "s") { e.preventDefault(); save(); return; }
+      if (meta && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) applyRestore(state.redo, state.undo); else applyRestore(state.undo, state.redo);
+        return;
+      }
+      if (isTyping(e)) {
+        if (e.key === "Escape") e.target.blur();
+        return;
+      }
+      if (e.key === "Escape") {
+        document.querySelectorAll(".modal-bg").forEach(function (m) { m.hidden = true; });
+        state.pending = null; state.selectedEnt = null;
+        window.getSelection().removeAllRanges();
+        renderText(); renderEntList(); renderSelbar();
+        return;
+      }
+      if (e.key === "ArrowRight" || e.key === "n") { e.preventDefault(); go(1); return; }
+      if (e.key === "ArrowLeft" || e.key === "p") { e.preventDefault(); go(-1); return; }
+      if (e.key === "u") { e.preventDefault(); nextUnlabeled(); return; }
+      if (e.key === "/") { e.preventDefault(); els.search.focus(); return; }
+      if (e.key === "?") { e.preventDefault(); $("helpModal").hidden = false; return; }
+      if ((e.key === "Delete" || e.key === "Backspace") && state.selectedEnt !== null) {
+        e.preventDefault(); removeEntity(state.selectedEnt); return;
+      }
+      if (/^[1-9]$/.test(e.key)) {
+        var l = state.labels[parseInt(e.key, 10) - 1];
+        if (l) { e.preventDefault(); applyLabel(l.name); }
+      }
+    });
+
+    window.addEventListener("beforeunload", function (e) {
+      if (state.dirty) { e.preventDefault(); e.returnValue = ""; }
+    });
+
+    // restore an autosaved session, or load ?data=… if we are on a server
+    var params = new URLSearchParams(location.search);
+    var dataParam = params.get("data");
+
+    loadSession().then(function (sess) {
+      // A storage warning matters more than a convenience prompt, so the two
+      // share one banner rather than one silently replacing the other.
+      var warn = state.storage === null
+        ? "Autosave is unavailable here, so your work lives only in this tab — export or save before closing it. "
+        : "";
+      if (sess && sess.records && sess.records.length) {
+        var when = new Date(sess.savedAt).toLocaleString();
+        banner(warn + "Unsaved work from " + when + " (" + (sess.fileName || "unknown file") + ", " + sess.records.length + " records).", [
+          { label: "Restore", primary: true, onClick: function () {
+              adoptDataset({ records: sess.records.map(NER.normalizeRecord), labels: null }, sess.fileName);
+              state.pos = Math.min(sess.pos || 0, Math.max(0, state.view.length - 1));
+              state.dirty = true; els.dirtyDot.className = "dot dirty";
+              renderAll(); hideBanner();
+            } },
+          { label: "Discard", onClick: function () { clearSession(); hideBanner(); } }
+        ]);
+      } else if (dataParam) {
+        if (warn) banner(warn, []);
+        fetchData(dataParam);
+      } else if (location.protocol !== "file:") {
+        banner(warn + "No data loaded.", [{ label: "Load sample (../data/tweets_c.json)", onClick: function () { fetchData("../data/tweets_c.json"); } }]);
+      } else if (warn) {
+        banner(warn, []);
+      }
+    });
+
+    function fetchData(url) {
+      fetch(url).then(function (r) {
+        if (!r.ok) throw new Error(r.status + " " + r.statusText);
+        return r.text();
+      }).then(function (t) {
+        adoptDataset(NER.parseDataset(t), url.split("/").pop());
+      }).catch(function (err) {
+        banner("Could not fetch " + url + ": " + err.message, [{ label: "Dismiss", onClick: hideBanner }]);
+      });
+    }
+
+    // Exposed so tests/test_annotator.html can drive the real code paths.
+    window.__NER_APP__ = {
+      state: state, els: els,
+      adoptDataset: adoptDataset, applyLabel: applyLabel, removeEntity: removeEntity,
+      go: go, goToAbsolute: goToAbsolute, nextUnlabeled: nextUnlabeled,
+      computeView: computeView, renderAll: renderAll, selectionOffsets: selectionOffsets
+    };
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
+})();
+</script>
+</body>
+</html>

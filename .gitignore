@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Annotation output written next to the tool
+*.annotated.json
+*.annotated.jsonl
+*.conll.txt
+*.bundle.json
+
+# Model weights are usually too large for plain git (GitHub rejects >100 MB).
+# Track them with Git LFS instead of committing them directly, e.g.
+#   git lfs track "*.safetensors"

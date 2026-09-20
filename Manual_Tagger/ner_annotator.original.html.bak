@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NER Annotator – Tweets</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  </style>
+</head>
+<body class="bg-gray-50">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useMemo, useRef, useState, useEffect } = React;
+
+    // ---------- Utilities ----------
+    function hashToHsl(str) {
+      let h = 0;
+      for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+      return \`hsl(\${h % 360} 70% 45%)\`;
+    }
+
+    function toJSONL(rows) {
+      return rows.map((r) => JSON.stringify(r)).join("\\n");
+    }
+
+    function parseJSONL(text) {
+      const out = [];
+      for (const line of text.split(/\\r?\\n/)) {
+        const s = line.trim();
+        if (!s) continue;
+        out.push(JSON.parse(s));
+      }
+      return out;
+    }
+
+    function download(filename, text) {
+      const blob = new Blob([text], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function buildSegments(text, entities) {
+      const len = text.length;
+      const ents = [...entities].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      const segs = [];
+      let cursor = 0;
+      let hasOverlap = false;
+
+      for (let i = 0; i < ents.length; i++) {
+        const [s, e, lab] = ents[i];
+        if (s < cursor) {
+          hasOverlap = true;
+        }
+        if (s > cursor) {
+          segs.push({ kind: "plain", text: text.slice(cursor, s) });
+        }
+        segs.push({ kind: "ent", text: text.slice(s, e), start: s, end: e, label: lab });
+        cursor = e;
+      }
+      if (cursor < len) {
+        segs.push({ kind: "plain", text: text.slice(cursor) });
+      }
+      return { segments: segs, hasOverlap };
+    }
+
+    function getSelectionOffsets(container) {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return null;
+      const range = sel.getRangeAt(0);
+      if (!container.contains(range.startContainer) || !container.contains(range.endContainer)) return null;
+
+      function offsetWithin(node, offset) {
+        let count = 0;
+        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+        let current;
+        while ((current = walker.nextNode())) {
+          if (current === node) {
+            return count + offset;
+          }
+          count += current.textContent.length;
+        }
+        return count;
+      }
+
+      const start = offsetWithin(range.startContainer, range.startOffset);
+      const end = offsetWithin(range.endContainer, range.endOffset);
+      const s = Math.min(start, end);
+      const e = Math.max(start, end);
+      if (s === e) return null;
+      return { start: s, end: e };
+    }
+
+    function App() {
+      const [examples, setExamples] = useState([]);
+      const [labels, setLabels] = useState(["ORG", "PERSON", "GPE", "LOC", "FAC", "NORP", "EVENT", "HASH"]);
+      const [idx, setIdx] = useState(0);
+      const [selectedEntIdx, setSelectedEntIdx] = useState(null);
+      const [pendingSel, setPendingSel] = useState(null);
+      const containerRef = useRef(null);
+      const fileInputRefJSONL = useRef(null);
+      const fileInputRefJSON = useRef(null);
+
+      const current = examples[idx] || null;
+      const { segments, hasOverlap } = useMemo(() => {
+        if (!current) return { segments: [{ kind: "plain", text: "" }], hasOverlap: false };
+        return buildSegments(current.text || "", current.label || []);
+      }, [current]);
+
+      useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return;
+        const onMouseUp = () => {
+          const off = getSelectionOffsets(el);
+          setPendingSel(off);
+          setSelectedEntIdx(null);
+        };
+        el.addEventListener("mouseup", onMouseUp);
+        return () => el.removeEventListener("mouseup", onMouseUp);
+      }, []);
+
+      useEffect(() => {
+        const onKey = (e) => {
+          if (e.key === "ArrowRight" || e.key.toLowerCase() === "n") {
+            e.preventDefault();
+            setIdx((i) => Math.min(i + 1, Math.max(0, examples.length - 1)));
+          } else if (e.key === "ArrowLeft" || e.key.toLowerCase() === "p") {
+            e.preventDefault();
+            setIdx((i) => Math.max(i - 1, 0));
+          } else if ((e.key === "Backspace" || e.key === "Delete") && selectedEntIdx != null && current) {
+            e.preventDefault();
+            removeEntity(selectedEntIdx);
+          }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+      }, [selectedEntIdx, current, examples.length]);
+
+      function loadJSONLFile(file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const arr = parseJSONL(String(reader.result));
+            const norm = arr.map((r, i) => ({ id: r.id ?? i + 1, text: r.text ?? "", label: r.label ?? (r.entities || []) }));
+            setExamples(norm);
+            setIdx(0);
+          } catch (e) {
+            alert("Could not parse JSONL: " + e.message);
+          }
+        };
+        reader.readAsText(file, "utf-8");
+      }
+
+      function loadJSONFile(file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const obj = JSON.parse(String(reader.result));
+            let norm = [];
+            if (Array.isArray(obj)) {
+              norm = obj.map((r, i) => ({ id: r.id ?? i + 1, text: r.text ?? "", label: r.label ?? (r.entities || []) }));
+            } else if (obj && Array.isArray(obj.examples)) {
+              norm = obj.examples.map((r, i) => ({ id: r.id ?? i + 1, text: r.text ?? "", label: r.label ?? (r.entities || r.spans || []) }));
+              if (Array.isArray(obj.labels) && obj.labels.length) setLabels(obj.labels);
+            } else {
+              throw new Error("Unrecognized JSON structure");
+            }
+            setExamples(norm);
+            setIdx(0);
+          } catch (e) {
+            alert("Could not parse JSON: " + e.message);
+          }
+        };
+        reader.readAsText(file, "utf-8");
+      }
+
+      function exportJSONL() {
+        if (!examples.length) return alert("Nothing to export");
+        const rows = examples.map((r) => ({ id: r.id, text: r.text, label: r.label }));
+        download("ner_annotations.jsonl", toJSONL(rows));
+      }
+
+      function exportJSONBundle() {
+        if (!examples.length) return alert("Nothing to export");
+        const bundle = {
+          labels,
+          examples: examples.map((r) => ({ id: r.id, text: r.text, entities: r.label }))
+        };
+        download("ner_annotations_bundle.json", JSON.stringify(bundle, null, 2));
+      }
+
+      function addEntity(label) {
+        if (!current) return;
+        if (!pendingSel) return alert("Select text in the tweet, then click a label");
+        const { start, end } = pendingSel;
+        if (start == null || end == null || start === end) return;
+        const txt = current.text || "";
+        const s = Math.max(0, Math.min(start, txt.length));
+        const e = Math.max(0, Math.min(end, txt.length));
+        if (s >= e) return;
+        const overlaps = (current.label || []).some(([a, b]) => !(e <= a || s >= b));
+        if (overlaps) {
+          if (!confirm("This span overlaps an existing entity. Add anyway?")) return;
+        }
+        const next = [...examples];
+        const item = { ...current, label: [...(current.label || []), [s, e, label]] };
+        next[idx] = item;
+        setExamples(next);
+        setPendingSel(null);
+        setSelectedEntIdx((item.label || []).length - 1);
+      }
+
+      function removeEntity(entIdx) {
+        const next = [...examples];
+        const item = { ...current, label: (current.label || []).filter((_, i) => i !== entIdx) };
+        next[idx] = item;
+        setExamples(next);
+        setSelectedEntIdx(null);
+      }
+
+      function updateEntity(entIdx, patch) {
+        const next = [...examples];
+        const ents = [...(current.label || [])];
+        const [s, e, l] = ents[entIdx];
+        const ns = patch.start ?? s;
+        const ne = patch.end ?? e;
+        const nl = patch.label ?? l;
+        ents[entIdx] = [Math.max(0, ns), Math.max(0, ne), nl];
+        next[idx] = { ...current, label: ents };
+        setExamples(next);
+      }
+
+      function addLabel(newLab) {
+        const v = (newLab || "").trim();
+        if (!v) return;
+        if (!labels.includes(v)) setLabels([...labels, v]);
+      }
+
+      function removeLabel(lab) {
+        if (!confirm(\`Remove label "\${lab}"?\`)) return;
+        setLabels(labels.filter((x) => x !== lab));
+      }
+
+      const total = examples.length;
+
+      return (
+        <div className="min-h-screen w-full bg-gray-50 text-gray-900">
+          <div className="max-w-5xl mx-auto p-4 sm:p-6">
+            <header className="flex flex-wrap items-center gap-2 justify-between mb-4">
+              <h1 className="text-2xl font-bold">NER Annotator – Tweets</h1>
+              <div className="flex flex-wrap gap-2">
+                <button className="px-3 py-2 rounded-xl bg-white shadow border" onClick={() => fileInputRefJSONL.current?.click()}>
+                  Load JSONL
+                </button>
+                <input ref={fileInputRefJSONL} type="file" accept=".jsonl,.txt,application/json" className="hidden" onChange={(e) => e.target.files && loadJSONLFile(e.target.files[0])} />
+
+                <button className="px-3 py-2 rounded-xl bg-white shadow border" onClick={() => fileInputRefJSON.current?.click()}>
+                  Load JSON
+                </button>
+                <input ref={fileInputRefJSON} type="file" accept=".json,application/json" className="hidden" onChange={(e) => e.target.files && loadJSONFile(e.target.files[0])} />
+
+                <button className="px-3 py-2 rounded-xl bg-white shadow border" onClick={exportJSONL}>
+                  Export JSONL
+                </button>
+                <button className="px-3 py-2 rounded-xl bg-white shadow border" onClick={exportJSONBundle}>
+                  Export JSON
+                </button>
+              </div>
+            </header>
+
+            <div className="grid md:grid-cols-[1.2fr_1fr] gap-4">
+              <div className="bg-white rounded-2xl shadow p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-sm text-gray-600">
+                    {total ? (
+                      <span>
+                        Tweet <span className="font-semibold">{idx + 1}</span> / {total}
+                      </span>
+                    ) : (
+                      <span>No data loaded</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button className="px-3 py-1.5 rounded-xl bg-gray-100 border" onClick={() => setIdx((i) => Math.max(i - 1, 0))} disabled={!total || idx === 0}>
+                      ◀ Prev (P)
+                    </button>
+                    <button className="px-3 py-1.5 rounded-xl bg-gray-100 border" onClick={() => setIdx((i) => Math.min(i + 1, total - 1))} disabled={!total || idx === total - 1}>
+                      Next (N) ▶
+                    </button>
+                  </div>
+                </div>
+
+                <div className="border rounded-xl p-4 bg-gray-50">
+                  <div ref={containerRef} className="whitespace-pre-wrap leading-7 text-[15px] select-text">
+                    {current && segments.map((seg, i) => {
+                      if (seg.kind === "plain") return <span key={i}>{seg.text}</span>;
+                      const color = hashToHsl(seg.label);
+                      const isSel = selectedEntIdx != null && (current.label || [])[selectedEntIdx]?.[0] === seg.start && (current.label || [])[selectedEntIdx]?.[1] === seg.end;
+                      return (
+                        <span
+                          key={i}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const found = (current.label || []).findIndex(([s, e]) => s === seg.start && e === seg.end);
+                            setSelectedEntIdx(found >= 0 ? found : null);
+                          }}
+                          className={\`rounded px-0.5 cursor-pointer inline-block \${isSel ? "ring-2 ring-black" : "ring-1 ring-transparent"}\`}
+                          title={\`\${seg.label} [\${seg.start}, \${seg.end})\`}
+                          style={{ background: color, color: "white", borderBottom: hasOverlap ? "2px dashed black" : undefined }}
+                        >
+                          {seg.text}
+                          <sup className="ml-1 text-[10px] opacity-80">{seg.label}</sup>
+                        </span>
+                      );
+                    })}
+                  </div>
+                  {!current && <div className="text-gray-500">Load a file to begin.</div>}
+                </div>
+
+                <div className="text-xs text-gray-600 mt-2">
+                  {pendingSel ? (
+                    <div>
+                      Selection: <span className="font-mono">[{pendingSel.start}, {pendingSel.end})</span>
+                    </div>
+                  ) : (
+                    <div>Select text in the tweet, then click a label to add a span.</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl shadow p-4 space-y-4">
+                <section>
+                  <h2 className="font-semibold mb-2">Labels</h2>
+                  <div className="flex flex-wrap gap-2">
+                    {labels.map((lab) => (
+                      <button
+                        key={lab}
+                        className="px-2.5 py-1.5 rounded-xl border text-white"
+                        style={{ background: hashToHsl(lab), borderColor: "rgba(0,0,0,0.15)" }}
+                        onClick={() => addEntity(lab)}
+                        title={\`Add span as \${lab}\`}
+                      >
+                        {lab}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <input id="newLabel" placeholder="Add new label e.g. DATE" className="border rounded-xl px-3 py-1.5 w-48" onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        addLabel(e.currentTarget.value);
+                        e.currentTarget.value = "";
+                      }
+                    }} />
+                    <button className="px-3 py-1.5 rounded-xl bg-gray-100 border" onClick={() => {
+                      const inp = document.getElementById("newLabel");
+                      if (inp) { addLabel(inp.value); inp.value = ""; }
+                    }}>Add</button>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">Tip: Select text first, then click a label to create an entity. Use N / P to navigate, Delete to remove selected.</div>
+                </section>
+
+                <section>
+                  <h2 className="font-semibold mb-2">Entity Inspector</h2>
+                  {!current || !(current.label?.length) ? (
+                    <div className="text-sm text-gray-600">No entities on this tweet yet.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {(current.label || []).map(([s, e, l], i) => {
+                        const isSel = selectedEntIdx === i;
+                        return (
+                          <div key={i} className={\`border rounded-xl p-2 \${isSel ? "ring-2 ring-blue-500" : ""}\`} onClick={() => setSelectedEntIdx(i)}>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-mono bg-gray-100 px-1.5 py-0.5 rounded">[{s}, {e})</span>
+                              <select className="border rounded px-2 py-1 text-sm" value={l} onChange={(e) => updateEntity(i, { label: e.target.value })}>
+                                {labels.map((lab) => (
+                                  <option key={lab} value={lab}>{lab}</option>
+                                ))}
+                              </select>
+                              <button className="ml-auto px-2 py-1 text-sm rounded-xl bg-gray-100 border" onClick={() => removeEntity(i)}>Delete</button>
+                            </div>
+                            <div className="text-xs text-gray-600 mt-1">
+                              <span className="font-semibold">Text:</span> {current.text.slice(s, e)}
+                            </div>
+                            <div className="flex items-center gap-2 mt-1">
+                              <label className="text-xs text-gray-500">Start</label>
+                              <input type="number" className="w-20 border rounded px-2 py-1 text-sm" value={s} onChange={(e) => updateEntity(i, { start: Number(e.target.value) })} />
+                              <label className="text-xs text-gray-500">End</label>
+                              <input type="number" className="w-20 border rounded px-2 py-1 text-sm" value={e} onChange={(e) => updateEntity(i, { end: Number(e.target.value) })} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+
+                <section>
+                  <h2 className="font-semibold mb-2">Dataset</h2>
+                  <div className="text-sm grid grid-cols-2 gap-2">
+                    <div><span className="text-gray-500">Total</span> <span className="font-semibold">{total}</span></div>
+                    <div><span className="text-gray-500">Index</span> <span className="font-semibold">{idx + 1}</span></div>
+                  </div>
+                  {current && (
+                    <textarea readOnly className="mt-2 w-full h-28 border rounded-xl p-2 text-xs bg-gray-50" value={current.text}></textarea>
+                  )}
+                </section>
+              </div>
+            </div>
+
+            <footer className="mt-6 text-xs text-gray-500">
+              <div>Spans are colored by label. Overlapping spans show dashed underline.</div>
+            </footer>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>

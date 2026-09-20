@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NER Annotator — tests</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f6f7f9; --panel:#fff; --text:#16181d; --muted:#666d7a; --border:#dfe3e8; --ok:#15803d; --bad:#dc2626; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --panel:#171a21; --text:#e8eaed; --muted:#9aa3b2; --border:#2a2f3a; --ok:#4ade80; --bad:#f87171; }
+  }
+  body { margin:0; padding:24px; background:var(--bg); color:var(--text);
+         font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:13.5px; margin-bottom:18px; }
+  #summary { font-weight:650; padding:10px 14px; border-radius:10px; margin-bottom:14px; border:1px solid var(--border); background:var(--panel); }
+  #summary.pass { border-left:4px solid var(--ok); }
+  #summary.fail { border-left:4px solid var(--bad); }
+  .group { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:12px; }
+  .group h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 8px; }
+  .t { font-family:ui-monospace,Consolas,monospace; font-size:13px; padding:2px 0; }
+  .t.ok::before  { content:"PASS "; color:var(--ok); font-weight:700; }
+  .t.bad::before { content:"FAIL "; color:var(--bad); font-weight:700; }
+  .t .why { color:var(--bad); display:block; padding-left:46px; }
+  .note { background:var(--panel); border:1px solid var(--border); border-left:4px solid #d97706;
+          border-radius:10px; padding:14px; }
+  code { background:rgba(127,127,127,.15); padding:1px 6px; border-radius:5px; font-size:13px; }
+  iframe { position:fixed; width:1200px; height:900px; left:-3000px; top:0; border:0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>NER Annotator — test suite</h1>
+  <div class="sub">Loads <code>../ner_annotator.html</code> in a hidden frame and exercises it for real: parsing, span
+  arithmetic, rendering, export round trips and the keyboard path.</div>
+  <div id="summary">Running…</div>
+  <div id="results"></div>
+</div>
+<iframe id="app" src="../ner_annotator.html"></iframe>
+
+<script>
+(function () {
+  "use strict";
+  var results = document.getElementById("results");
+  var summary = document.getElementById("summary");
+  var passed = 0, failed = 0, group = null;
+
+  function G(name) {
+    group = document.createElement("div");
+    group.className = "group";
+    group.innerHTML = "<h2>" + name + "</h2>";
+    results.appendChild(group);
+  }
+  function ok(name, cond, why) {
+    var d = document.createElement("div");
+    d.className = "t " + (cond ? "ok" : "bad");
+    d.textContent = name;
+    if (!cond && why !== undefined) {
+      var s = document.createElement("span");
+      s.className = "why";
+      s.textContent = why;
+      d.appendChild(s);
+    }
+    group.appendChild(d);
+    cond ? passed++ : failed++;
+  }
+  function eq(name, a, b) {
+    var sa = JSON.stringify(a), sb = JSON.stringify(b);
+    ok(name, sa === sb, "got " + sa + "  want " + sb);
+  }
+
+  function fail(msg) {
+    summary.className = "fail";
+    summary.textContent = msg;
+  }
+
+  var frame = document.getElementById("app");
+
+  // file:// blocks same-origin access into the frame, so say so plainly
+  // instead of reporting a wall of false failures.
+  frame.onload = function () {
+    var win;
+    try {
+      win = frame.contentWindow;
+      if (!win.NER) throw new Error("NER core not found in the frame");
+    } catch (e) {
+      summary.className = "fail";
+      summary.textContent = "Cannot reach the annotator inside the frame.";
+      results.innerHTML =
+        '<div class="note"><b>Serve this folder over http instead of opening it from disk.</b><br><br>' +
+        "Browsers refuse cross-frame access between <code>file://</code> pages, so the tests cannot see the tool. " +
+        "From the repo root run:<br><br><code>python -m http.server 8000</code><br><br>" +
+        "then open <code>http://localhost:8000/Manual_Tagger/tests/test_annotator.html</code>.<br><br>" +
+        "<span style=\"color:var(--muted)\">(" + e.message + ")</span></div>";
+      return;
+    }
+    try {
+      run(win, win.NER, win.__NER_APP__);
+    } catch (e) {
+      ok("suite ran to completion", false, e && e.stack ? e.stack : String(e));
+    }
+    summary.className = failed ? "fail" : "pass";
+    summary.textContent = failed
+      ? failed + " failed, " + passed + " passed"
+      : "All " + passed + " tests passed";
+  };
+
+  // ------------------------------------------------------------------ tests
+  function run(win, NER, APP) {
+    var els = APP.els, doc = win.document;
+
+    G("Parsing");
+    var p = NER.parseDataset('[{"id":1,"text":"San Diego burns","Comments":[],"label":[[0,9,"GPE"]]}]');
+    eq("plain JSON array", p.records.length, 1);
+    eq("span preserved", p.records[0].label, [[0, 9, "GPE"]]);
+
+    p = NER.parseDataset('{"id":1,"text":"a b"}\n{"id":2,"text":"c d"}');
+    eq("JSONL detected without a hint", p.records.length, 2);
+
+    p = NER.parseDataset(JSON.stringify({ labels: ["X"], examples: [{ id: 7, content: "hello world", entities: [{ start: 0, end: 5, label: "X" }] }] }));
+    eq("bundle label set read", p.labels, ["X"]);
+    eq("alias text field (content)", p.records[0].text, "hello world");
+    eq("{start,end,label} span coerced", p.records[0].label, [[0, 5, "X"]]);
+    eq("original field name remembered", p.records[0]._textKey, "content");
+
+    p = NER.parseDataset('[{"id":3,"text":"hi","source":"twitter","meta":{"a":1}}]');
+    var plain = NER.toPlain(p.records[0]);
+    eq("unknown fields survive a round trip", [plain.source, plain.meta], ["twitter", { a: 1 }]);
+
+    var threw = false;
+    try { NER.parseDataset("not json at all"); } catch (e) { threw = true; }
+    ok("garbage input throws instead of silently loading nothing", threw);
+
+    G("Span arithmetic");
+    var segs = NER.segmentText("San Diego burns", [[0, 9, "GPE"]]);
+    eq("segments rejoin to the original text", segs.map(function (s) { return s.text; }).join(""), "San Diego burns");
+
+    var t = "San Diego Sheriff's Office";
+    segs = NER.segmentText(t, [[0, 26, "ORG"], [0, 9, "GPE"]]);
+    eq("OVERLAP: text reconstructed exactly", segs.map(function (s) { return s.text; }).join(""), t);
+    ok("OVERLAP: innermost span takes the color", segs[0].cover[0].label === "GPE");
+    ok("OVERLAP: flagged as covered twice", segs[0].cover.length === 2);
+
+    eq("out-of-range span ignored, text intact", NER.segmentText("abc", [[0, 99, "BAD"]]).map(function (s) { return s.text; }).join(""), "abc");
+    eq("leading/trailing whitespace trimmed", NER.trimSpan("  San Diego  ", 0, 13), { start: 2, end: 11 });
+    eq("whitespace-only selection rejected", NER.trimSpan("   ", 0, 3), null);
+
+    G("Exports");
+    var rec = NER.normalizeRecord({ id: 1, text: "Fire near Campo today", label: [[10, 15, "GPE"]] }, 0);
+    eq("CoNLL single token", NER.toCoNLL([rec]).split("\n").slice(0, 4), ["Fire O", "near O", "Campo B-GPE", "today O"]);
+    var rec2 = NER.normalizeRecord({ id: 1, text: "San Diego Sheriff burns", label: [[0, 17, "ORG"]] }, 0);
+    eq("CoNLL multi-token B-/I-", NER.toCoNLL([rec2]).split("\n").slice(0, 4), ["San B-ORG", "Diego I-ORG", "Sheriff I-ORG", "burns O"]);
+    var rt = NER.parseDataset(NER.toJSON([rec2]));
+    eq("JSON round trip keeps spans", rt.records[0].label, [[0, 17, "ORG"]]);
+    var rtl = NER.parseDataset(NER.toJSONL([rec2]));
+    eq("JSONL round trip keeps spans", rtl.records[0].label, [[0, 17, "ORG"]]);
+
+    G("Data health checks");
+    var iss = NER.datasetIssues([
+      NER.normalizeRecord({ id: 1, text: "aa bb", label: [[0, 2, "A"], [1, 4, "B"]] }, 0),
+      NER.normalizeRecord({ id: 1, text: "cc", label: [[0, 9, "A"]] }, 1),
+      NER.normalizeRecord({ id: 2, text: "dd ee", label: [[2, 5, "A"]] }, 2)
+    ]);
+    eq("duplicate ids counted", iss.dupIds, 1);
+    eq("out-of-range spans counted", iss.badSpans.length, 1);
+    eq("overlapping records counted", iss.overlapping, 1);
+    eq("untrimmed spans counted", iss.untrimmed, 1);
+
+    // ---------------------------------------------------------------- DOM
+    G("Offsets in the live DOM (the bug that broke the old tool)");
+    var TEXT = "San Diego officials offered a reward near Campo";
+    APP.adoptDataset({ records: [NER.normalizeRecord({ id: 1, text: TEXT, Comments: [], label: [[0, 9, "GPE"]] }, 0)], labels: null }, "test.json");
+
+    eq("rendered text === record text", els.textbox.textContent, TEXT);
+    ok("a label chip is rendered", els.textbox.querySelector(".ent[data-chip]") !== null);
+    eq("the chip is a ::after pseudo-element, not DOM text", els.textbox.querySelector(".ent").textContent, "San Diego");
+
+    function locate(off) {
+      var w = doc.createTreeWalker(els.textbox, win.NodeFilter.SHOW_TEXT, null), seen = 0, n;
+      while ((n = w.nextNode())) {
+        if (seen + n.textContent.length >= off) return [n, off - seen];
+        seen += n.textContent.length;
+      }
+      return null;
+    }
+    function select(a, b) {
+      var s1 = locate(a), s2 = locate(b);
+      var r = doc.createRange();
+      r.setStart(s1[0], s1[1]); r.setEnd(s2[0], s2[1]);
+      var sel = win.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      return r.toString();
+    }
+
+    eq("selection text", select(10, 19), "officials");
+    eq("offsets exact AFTER an existing tag", APP.selectionOffsets(els.textbox), { start: 10, end: 19 });
+
+    APP.state.pending = APP.selectionOffsets(els.textbox);
+    APP.applyLabel("ORG");
+    eq("span stored at true offsets", APP.state.records[0].label, [[0, 9, "GPE"], [10, 19, "ORG"]]);
+
+    eq("selection text after two tags", select(42, 47), "Campo");
+    eq("offsets exact AFTER two tags", APP.selectionOffsets(els.textbox), { start: 42, end: 47 });
+    APP.state.pending = APP.selectionOffsets(els.textbox);
+    APP.applyLabel("GPE");
+    eq("third span correct", APP.state.records[0].label[2], [42, 47, "GPE"]);
+    eq("all spans slice back to the right words",
+      APP.state.records[0].label.map(function (s) { return TEXT.slice(s[0], s[1]); }),
+      ["San Diego", "officials", "Campo"]);
+
+    select(6, 19);
+    eq("selection crossing a rendered tag", APP.selectionOffsets(els.textbox), { start: 6, end: 19 });
+
+    select(19, 28);   // " offered "
+    APP.state.pending = APP.selectionOffsets(els.textbox);
+    APP.applyLabel("ORG");
+    var added = APP.state.records[0].label.filter(function (s) { return s[0] >= 19 && s[1] <= 28; }).pop();
+    eq("sloppy selection trimmed to the word", [added[0], added[1], TEXT.slice(added[0], added[1])], [20, 27, "offered"]);
+
+    G("Editing");
+    var before = APP.state.records[0].label.length;
+    APP.state.selectedEnt = 0;
+    doc.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+    eq("Delete removes the selected span", APP.state.records[0].label.length, before - 1);
+    eq("text still intact after delete", els.textbox.textContent, TEXT);
+    doc.dispatchEvent(new win.KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }));
+    eq("Ctrl+Z restores it", APP.state.records[0].label.length, before);
+
+    APP.state.pending = { start: 0, end: 19 };
+    APP.applyLabel("ORG");
+    eq("text intact once spans overlap", els.textbox.textContent, TEXT);
+
+    G("Navigation and filtering");
+    function mk(n) {
+      return { records: Array.from({ length: n }, function (_, i) {
+        return NER.normalizeRecord({ id: i + 1, text: "record number " + i, Comments: [], label: i % 2 ? [[0, 6, "GPE"]] : [] }, i);
+      }), labels: null };
+    }
+    APP.adoptDataset(mk(20), "a.json");
+    APP.go(1); APP.go(1); APP.go(1);
+    eq("moved to record 4", APP.state.pos, 3);
+    APP.adoptDataset(mk(12), "b.json");
+    eq("a newly opened file starts at record 1", APP.state.pos, 0);
+    eq("first record is shown", els.textbox.textContent, "record number 0");
+
+    APP.state.filter.status = "unlabeled";
+    APP.computeView();
+    eq("unlabeled filter keeps 6 of 12", APP.state.view.length, 6);
+    ok("every record in view is unlabeled", APP.state.view.every(function (i) {
+      return !APP.state.records[i].label.length;
+    }));
+
+    APP.state.filter.status = "labeled";
+    APP.computeView();
+    eq("labeled filter keeps the other 6", APP.state.view.length, 6);
+
+    APP.state.filter.status = "all";
+    APP.state.filter.query = "number 7";
+    APP.computeView();
+    eq("text search narrows to one record", APP.state.view.length, 1);
+    eq("and it is the right one", APP.state.records[APP.state.view[0]].text, "record number 7");
+
+    APP.state.filter.query = "";
+    APP.state.filter.label = "GPE";
+    APP.computeView();
+    eq("label filter keeps only records carrying GPE", APP.state.view.length, 6);
+
+    APP.state.filter = { query: "", status: "all", label: "" };
+    APP.computeView();
+    eq("clearing filters restores all 12", APP.state.view.length, 12);
+
+    APP.goToAbsolute(4);
+    eq("jump to record 5", APP.state.view[APP.state.pos], 4);
+    APP.state.pos = 0;
+    APP.nextUnlabeled();
+    ok("next-unlabeled lands on an unlabeled record",
+      !APP.state.records[APP.state.view[APP.state.pos]].label.length);
+
+    G("Real records from tweets_c.json");
+    var REAL = [
+      { id: 9, text: "Breaking: Fire crews are battling a brush fire burning north of Campo near I-8.", Comments: ["north is loc"], label: [[55, 60, "LOC"], [64, 69, "GPE"], [75, 78, "FAC"]] },
+      { id: 24, text: "Madonna’s brother, Christopher Ciccone, has died at 63", Comments: [], label: [[0, 7, "PERSON"], [19, 38, "PERSON"]] },
+      { id: 156, text: "The Justice Department is seeking emergency relief from the U.S. Supreme Court in a Texas case involving limited access to the abortion drug #mifepristone.", Comments: [], label: [[0, 22, "ORG"], [60, 78, "ORG"], [84, 89, "GPE"], [141, 154, "HASH"]] },
+      { id: 1, text: "Misinformation has spread over the past week in communities hit the hardest.", Comments: [], label: [] }
+    ];
+    var parsedReal = NER.parseDataset(JSON.stringify(REAL));
+    APP.adoptDataset(parsedReal, "tweets_c.json");
+    eq("4 real records loaded", APP.state.records.length, 4);
+    eq("first real record renders exactly", els.textbox.textContent, REAL[0].text);
+    eq("its note is loaded into the box", els.comments.value, "north is loc");
+    APP.go(1);
+    eq("curly apostrophe does not shift offsets",
+      Array.prototype.map.call(els.textbox.querySelectorAll(".ent"), function (e) { return e.textContent; }),
+      ["Madonna", "Christopher Ciccone"]);
+    eq("duplicate ids in real data are detected", NER.datasetIssues(APP.state.records).dupIds, 0);
+    ok("every label in the data is in the palette",
+      NER.labelsUsed(APP.state.records).every(function (n) {
+        return APP.state.labels.some(function (l) { return l.name === n; });
+      }));
+    var backReal = NER.parseDataset(NER.toJSON(APP.state.records));
+    eq("real data round trip: spans", backReal.records.map(function (r) { return r.label; }), REAL.map(function (r) { return NER.sortSpans(r.label); }));
+    eq("real data round trip: text", backReal.records.map(function (r) { return r.text; }), REAL.map(function (r) { return r.text; }));
+    eq("real data round trip: Comments", backReal.records.map(function (r) { return r.Comments; }), REAL.map(function (r) { return r.Comments; }));
+    var conllReal = NER.toCoNLL([APP.state.records[0]]).split("\n");
+    eq("CoNLL on real text", conllReal.filter(function (l) { return /^Campo|^I-8/.test(l); }), ["Campo B-GPE", "I-8. B-FAC"]);
+
+    G("Scale");
+    var big = [];
+    for (var i = 0; i < 7336; i++) {
+      var tx = "Fire crews battle a brush fire north of Campo near I-8 tonight " + i;
+      big.push(NER.normalizeRecord({ id: i + 1, text: tx, Comments: [], label: [[0, 4, "ORG"], [tx.length - 4, tx.length, "GPE"]] }, i));
+    }
+    var t0 = win.performance.now();
+    APP.adoptDataset({ records: big, labels: null }, "perf.json");
+    var loadMs = win.performance.now() - t0;
+    ok("7,336 records load and render in under 1s (" + Math.round(loadMs) + "ms)", loadMs < 1000, Math.round(loadMs) + "ms");
+    t0 = win.performance.now();
+    NER.toJSON(APP.state.records);
+    var expMs = win.performance.now() - t0;
+    ok("full JSON export under 1s (" + Math.round(expMs) + "ms)", expMs < 1000, Math.round(expMs) + "ms");
+    t0 = win.performance.now();
+    NER.datasetIssues(APP.state.records);
+    var healthMs = win.performance.now() - t0;
+    ok("health scan under 1s (" + Math.round(healthMs) + "ms)", healthMs < 1000, Math.round(healthMs) + "ms");
+  }
+})();
+</script>
+</body>
+</html>
